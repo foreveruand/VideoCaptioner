@@ -7,13 +7,14 @@ import atexit
 import difflib
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import json_repair
 
 from ..asr.asr_data import ASRData, ASRDataSeg
 from ..entities import SubtitleProcessData
 from ..llm import call_llm
+from ..llm.params import parse_llm_extra_params, prepare_llm_request_params
 from ..prompts import get_prompt
 from ..split.alignment import SubtitleAligner
 from ..utils.logger import setup_logger
@@ -22,6 +23,87 @@ from ..utils.text_utils import count_words
 logger = setup_logger("subtitle_optimizer")
 
 MAX_STEPS = 3
+MAX_DUPLICATE_GAP_MS = 1500
+FILLER_WORDS = {
+    "ah",
+    "aha",
+    "eh",
+    "er",
+    "hm",
+    "hmm",
+    "mm",
+    "oh",
+    "uh",
+    "um",
+}
+FILLER_CHARS = set("啊阿呀哎唉诶欸嗯呃额噢哦喔哈呵ふあええっんー")
+
+
+def _normalize_noise_text(text: str) -> str:
+    """Normalize text for conservative duplicate/noise checks."""
+    return re.sub(r"[\W_]+", "", text, flags=re.UNICODE).lower()
+
+
+def _is_filler_only(text: str) -> bool:
+    """Return True for short subtitles made only of filler sounds."""
+    normalized = _normalize_noise_text(text)
+    if not normalized or len(normalized) > 16:
+        return False
+
+    words = re.findall(r"[a-z]+", text.lower())
+    if words and all(word in FILLER_WORDS for word in words):
+        return True
+
+    return set(normalized).issubset(FILLER_CHARS)
+
+
+def _compress_repeated_filler(text: str) -> str:
+    """Collapse a segment that is just the same filler repeated many times."""
+    stripped = text.strip()
+    normalized = _normalize_noise_text(stripped)
+    if not normalized or not _is_filler_only(stripped):
+        return text
+
+    for unit_len in range(1, min(6, len(normalized) // 2) + 1):
+        if len(normalized) % unit_len != 0:
+            continue
+        unit = normalized[:unit_len]
+        if unit * (len(normalized) // unit_len) == normalized:
+            return unit
+
+    return text
+
+
+def prefilter_subtitle_noise(segments: List[ASRDataSeg]) -> List[ASRDataSeg]:
+    """Conservatively remove obvious ASR noise before LLM optimization."""
+    filtered_segments: List[ASRDataSeg] = []
+
+    for seg in segments:
+        seg.text = _compress_repeated_filler(seg.text)
+        normalized = _normalize_noise_text(seg.text)
+        is_filler = _is_filler_only(seg.text)
+
+        if filtered_segments:
+            prev = filtered_segments[-1]
+            prev_normalized = _normalize_noise_text(prev.text)
+            time_gap = seg.start_time - prev.end_time
+
+            if is_filler and _is_filler_only(prev.text):
+                logger.debug(f"Removed repeated filler subtitle: {seg.text}")
+                continue
+
+            if (
+                normalized
+                and normalized == prev_normalized
+                and len(normalized) >= 2
+                and time_gap <= MAX_DUPLICATE_GAP_MS
+            ):
+                logger.debug(f"Removed repeated subtitle: {seg.text}")
+                continue
+
+        filtered_segments.append(seg)
+
+    return filtered_segments
 
 
 class SubtitleOptimizer:
@@ -39,6 +121,7 @@ class SubtitleOptimizer:
         batch_num: int,
         model: str,
         custom_prompt: str,
+        llm_extra_params: Any = None,
         update_callback: Optional[Callable] = None,
     ):
         """初始化优化器
@@ -55,6 +138,7 @@ class SubtitleOptimizer:
         self.batch_num = batch_num
         self.model = model
         self.custom_prompt = custom_prompt
+        self.llm_extra_params = parse_llm_extra_params(llm_extra_params)
         self.update_callback = update_callback
 
         self.is_running = True
@@ -81,6 +165,8 @@ class SubtitleOptimizer:
                 asr_data = ASRData.from_subtitle_file(subtitle_data)
             else:
                 asr_data = subtitle_data
+
+            asr_data.segments = prefilter_subtitle_noise(asr_data.segments)
 
             # 转换为字典格式
             subtitle_dict = {
@@ -215,6 +301,10 @@ class SubtitleOptimizer:
         ]
 
         last_result = None
+        request_params = prepare_llm_request_params(
+            {"temperature": 0.2},
+            self.llm_extra_params,
+        )
 
         # Agent loop
         for step in range(MAX_STEPS):
@@ -222,7 +312,7 @@ class SubtitleOptimizer:
             response = call_llm(
                 messages=messages,
                 model=self.model,
-                temperature=0.2,
+                **request_params,
             )
 
             result_text = response.choices[0].message.content

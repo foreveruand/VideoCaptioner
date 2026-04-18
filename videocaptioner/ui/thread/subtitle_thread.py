@@ -12,15 +12,16 @@ from videocaptioner.core.entities import (
     SubtitleTask,
     TranslatorServiceEnum,
 )
-from videocaptioner.core.llm.check_llm import check_llm_connection
 from videocaptioner.core.llm.context import (
     clear_task_context,
     generate_task_id,
     set_task_context,
     update_stage,
 )
+from videocaptioner.core.llm.client import reset_llm_client
 from videocaptioner.core.optimize.optimize import SubtitleOptimizer
 from videocaptioner.core.split.split import SubtitleSplitter
+from videocaptioner.core.subtitle.preprocess import preprocess_subtitle_before_llm
 from videocaptioner.core.translate.factory import TranslatorFactory
 from videocaptioner.core.translate.types import TranslatorType
 from videocaptioner.core.utils.logger import setup_logger
@@ -56,6 +57,8 @@ def create_translator_from_config(
         model=config.llm_model or "",
         custom_prompt=custom_prompt,
         is_reflect=config.need_reflect,
+        use_structured_outputs=config.use_structured_outputs,
+        llm_extra_params=config.llm_extra_params,
         update_callback=callback,
     )
 
@@ -84,15 +87,9 @@ class SubtitleThread(QThread):
         if not config:
             raise Exception(self.tr("LLM API 未配置, 请检查LLM配置"))
         if config.base_url and config.api_key and config.llm_model:
-            success, message = check_llm_connection(
-                config.base_url,
-                config.api_key,
-                config.llm_model,
-            )
-            if not success:
-                raise Exception(f"{self.tr('LLM API 测试失败: ')}{message or ''}")
             os.environ["OPENAI_BASE_URL"] = config.base_url
             os.environ["OPENAI_API_KEY"] = config.api_key
+            reset_llm_client()
             return config
         else:
             raise Exception(self.tr("LLM API 未配置, 请检查LLM配置"))
@@ -120,7 +117,7 @@ class SubtitleThread(QThread):
 
             asr_data = ASRData.from_subtitle_file(subtitle_path)
 
-            # 1. 分割成字词级时间戳（对于非断句字幕且开启分割选项）
+            # 1. 分割成字词级时间戳（仅在开启LLM智能断句且输入不是字词级时）
             if subtitle_config.need_split and not asr_data.is_word_timestamp():
                 asr_data.split_to_word_segments()
                 self.update_all.emit(asr_data.to_json())
@@ -130,7 +127,7 @@ class SubtitleThread(QThread):
                 self.progress.emit(2, self.tr("开始验证 LLM 配置..."))
                 subtitle_config = self._setup_llm_config()
 
-            # 2. 重新断句（对于字词级字幕）
+            # 2. 重新断句（字词级字幕总是需要合并；need_split只控制是否优先使用LLM）
             if asr_data.is_word_timestamp():
                 update_stage("split")
                 self.progress.emit(5, self.tr("字幕断句..."))
@@ -140,9 +137,17 @@ class SubtitleThread(QThread):
                     model=subtitle_config.llm_model,
                     max_word_count_cjk=subtitle_config.max_word_count_cjk,
                     max_word_count_english=subtitle_config.max_word_count_english,
+                    use_llm=subtitle_config.need_split,
+                    llm_extra_params=subtitle_config.llm_extra_params,
                 )
                 asr_data = splitter.split_subtitle(asr_data)
                 self.update_all.emit(asr_data.to_json())
+
+            if subtitle_config.need_optimize or subtitle_config.need_translate:
+                original_count = len(asr_data.segments)
+                asr_data = preprocess_subtitle_before_llm(asr_data)
+                if len(asr_data.segments) != original_count:
+                    self.update_all.emit(asr_data.to_json())
 
             # 3. 优化字幕
             context_info = f'The subtitles below are from a file named "{task_file}". Use this context to improve accuracy if needed.\n'
@@ -161,6 +166,7 @@ class SubtitleThread(QThread):
                     batch_num=subtitle_config.batch_size,
                     model=subtitle_config.llm_model,
                     custom_prompt=custom_prompt or "",
+                    llm_extra_params=subtitle_config.llm_extra_params,
                     update_callback=self.callback,
                 )
                 asr_data = optimizer.optimize_subtitle(asr_data)
@@ -242,7 +248,7 @@ class SubtitleThread(QThread):
     def need_llm(self, subtitle_config: SubtitleConfig, asr_data: ASRData):
         return (
             subtitle_config.need_optimize
-            or asr_data.is_word_timestamp()
+            or (subtitle_config.need_split and asr_data.is_word_timestamp())
             or (
                 subtitle_config.need_translate
                 and subtitle_config.translator_service
@@ -332,6 +338,7 @@ class RetranslateThread(QThread):
                     raise Exception("LLM API 未配置，请检查 LLM 配置")
                 os.environ["OPENAI_BASE_URL"] = config.base_url
                 os.environ["OPENAI_API_KEY"] = config.api_key
+                reset_llm_client()
 
             # 构建仅含选中行的 ASRData
             asr_data = ASRData.from_json(self.selected_data)

@@ -1,8 +1,9 @@
 import difflib
 import re
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 from ..llm import call_llm
+from ..llm.params import prepare_llm_request_params
 from ..prompts import get_prompt
 from ..utils.logger import setup_logger
 from ..utils.text_utils import count_words, is_mainly_cjk
@@ -17,6 +18,7 @@ def split_by_llm(
     model: str = "gpt-4o-mini",
     max_word_count_cjk: int = 18,
     max_word_count_english: int = 12,
+    llm_extra_params: Any = None,
 ) -> List[str]:
     """使用LLM进行文本断句（固定使用句子Segments）
 
@@ -31,7 +33,11 @@ def split_by_llm(
     """
     try:
         return _split_with_agent_loop(
-            text, model, max_word_count_cjk, max_word_count_english
+            text,
+            model,
+            max_word_count_cjk,
+            max_word_count_english,
+            llm_extra_params,
         )
     except Exception as e:
         logger.error(f"Sentence splitting failed: {e}")
@@ -43,6 +49,7 @@ def _split_with_agent_loop(
     model: str,
     max_word_count_cjk: int,
     max_word_count_english: int,
+    llm_extra_params: Any = None,
 ) -> List[str]:
     """使用agent loop 建立反馈循环进行文本断句，自动验证和修正"""
     prompt_path = "split/sentence"
@@ -62,12 +69,16 @@ def _split_with_agent_loop(
     ]
 
     last_result = None
+    request_params = prepare_llm_request_params(
+        {"temperature": 0.1},
+        llm_extra_params,
+    )
 
     for step in range(MAX_STEPS):
         response = call_llm(
             messages=messages,
             model=model,
-            temperature=0.1,
+            **request_params,
         )
 
         result_text = response.choices[0].message.content

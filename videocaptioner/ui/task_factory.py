@@ -15,7 +15,7 @@ from videocaptioner.core.entities import (
     TranscribeTask,
     TranscriptAndSubtitleTask,
 )
-from videocaptioner.ui.common.config import cfg
+from videocaptioner.ui.common.config import cfg, get_provider_param_items
 
 
 class TaskFactory:
@@ -59,7 +59,7 @@ class TaskFactory:
 
         # 构建输出路径
         if need_next_task:
-            need_word_time_stamp = cfg.need_split.value
+            need_word_time_stamp = cfg.faster_whisper_one_word.value
             output_path = str(
                 Path(cfg.work_dir.value)
                 / file_name
@@ -166,16 +166,22 @@ class TaskFactory:
             api_key = ""
             llm_model = ""
 
+        extra_params_item, structured_item = get_provider_param_items(current_service)
+        llm_extra_params = cfg.get(extra_params_item)
+        use_structured_outputs = bool(cfg.get(structured_item))
+
         config = SubtitleConfig(
             # 翻译配置
             base_url=base_url,
             api_key=api_key,
             llm_model=llm_model,
+            llm_extra_params=llm_extra_params,
             deeplx_endpoint=cfg.deeplx_endpoint.value,
             # 翻译服务
             translator_service=cfg.translator_service.value,
             # 字幕处理
             need_reflect=cfg.need_reflect_translate.value,
+            use_structured_outputs=use_structured_outputs,
             need_translate=cfg.need_translate.value,
             need_optimize=cfg.need_optimize.value,
             thread_num=cfg.thread_num.value,

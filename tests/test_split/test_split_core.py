@@ -3,7 +3,7 @@
 全面测试 SubtitleSplitter 类的核心方法和边缘情况
 """
 
-from videocaptioner.core.asr.asr_data import ASRDataSeg
+from videocaptioner.core.asr.asr_data import ASRData, ASRDataSeg
 from videocaptioner.core.split.split import (
     MAX_WORD_COUNT_CJK,
     MAX_WORD_COUNT_ENGLISH,
@@ -120,6 +120,58 @@ class TestSubtitleSplitterInit:
         splitter = SubtitleSplitter(thread_num=3, model="gpt-4o-mini")
         assert splitter.executor is not None
         assert splitter.executor._max_workers == 3
+
+    def test_use_llm_false_processes_by_rules(self, monkeypatch):
+        """关闭LLM智能断句时直接走规则断句。"""
+        splitter = SubtitleSplitter(
+            thread_num=1,
+            model="gpt-4o-mini",
+            use_llm=False,
+        )
+
+        def fail_if_called(*args, **kwargs):
+            raise AssertionError("LLM splitter should not be called")
+
+        monkeypatch.setattr("videocaptioner.core.split.split.split_by_llm", fail_if_called)
+
+        asr_data = ASRData(
+            [
+                ASRDataSeg(text="你", start_time=0, end_time=100),
+                ASRDataSeg(text="好", start_time=100, end_time=200),
+            ]
+        )
+        result = splitter.split_subtitle(asr_data)
+
+        assert result.segments
+
+    def test_use_llm_true_falls_back_to_rules(self, monkeypatch):
+        """开启LLM智能断句时LLM失败仍降级到规则断句。"""
+        splitter = SubtitleSplitter(
+            thread_num=1,
+            model="gpt-4o-mini",
+            use_llm=True,
+        )
+
+        monkeypatch.setattr(
+            "videocaptioner.core.split.split.split_by_llm",
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+        monkeypatch.setattr(
+            splitter,
+            "_process_by_rules",
+            lambda segments: [ASRDataSeg(text="rules", start_time=0, end_time=200)],
+        )
+
+        result = splitter._process_single_segment(
+            ASRData(
+                [
+                    ASRDataSeg(text="你", start_time=0, end_time=100),
+                    ASRDataSeg(text="好", start_time=100, end_time=200),
+                ]
+            )
+        )
+
+        assert result[0].text == "rules"
 
 
 class TestDetermineNumSegments:

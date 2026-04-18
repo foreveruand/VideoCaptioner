@@ -11,7 +11,21 @@ from typing import Callable
 import pytest
 
 from videocaptioner.core.asr.asr_data import ASRData, ASRDataSeg
-from videocaptioner.core.optimize.optimize import SubtitleOptimizer
+from videocaptioner.core.optimize.optimize import SubtitleOptimizer, prefilter_subtitle_noise
+
+
+def test_prefilter_subtitle_noise_removes_repeated_fillers_and_duplicates():
+    segments = [
+        ASRDataSeg(text="ああ", start_time=0, end_time=100),
+        ASRDataSeg(text="ああ", start_time=100, end_time=200),
+        ASRDataSeg(text="同じ文章です", start_time=500, end_time=1000),
+        ASRDataSeg(text="同じ文章です", start_time=1100, end_time=1600),
+        ASRDataSeg(text="必要な字幕です", start_time=3000, end_time=3600),
+    ]
+
+    result = prefilter_subtitle_noise(segments)
+
+    assert [seg.text for seg in result] == ["あ", "同じ文章です", "必要な字幕です"]
 
 
 @pytest.mark.integration

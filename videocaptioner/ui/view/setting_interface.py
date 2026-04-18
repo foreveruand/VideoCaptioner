@@ -1,14 +1,19 @@
+import json
 import webbrowser
+from typing import Any
 
 from PyQt5.QtCore import Qt, QThread, QUrl, pyqtSignal
 from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtWidgets import QFileDialog, QLabel, QWidget
 from qfluentwidgets import (
+    BodyLabel,
     ComboBoxSettingCard,
     CustomColorSettingCard,
     ExpandLayout,
     HyperlinkCard,
     InfoBar,
+    LineEdit,
+    MessageBoxBase,
     OptionsSettingCard,
     PrimaryPushSettingCard,
     PushSettingCard,
@@ -31,7 +36,7 @@ from videocaptioner.core.entities import LLMServiceEnum, TranscribeModelEnum, Tr
 from videocaptioner.core.llm import check_whisper_connection
 from videocaptioner.core.llm.check_llm import check_llm_connection, get_available_models
 from videocaptioner.core.utils.cache import disable_cache, enable_cache
-from videocaptioner.ui.common.config import cfg
+from videocaptioner.ui.common.config import cfg, get_provider_param_items, parse_llm_provider_presets
 from videocaptioner.ui.common.signal_bus import signalBus
 from videocaptioner.ui.components.EditComboBoxSettingCard import EditComboBoxSettingCard
 from videocaptioner.ui.components.LineEditSettingCard import LineEditSettingCard
@@ -260,6 +265,8 @@ class SettingInterface(ScrollArea):
 
     def __createLLMServiceCards(self):
         """创建LLM服务相关的配置卡片"""
+        self._updating_preset_ui = False
+
         # 服务选择卡片
         self.llmServiceCard = ComboBoxSettingCard(
             cfg.llm_service,
@@ -270,6 +277,37 @@ class SettingInterface(ScrollArea):
             parent=self.llmGroup,
         )
         self.llmServiceCard.comboBox.setMinimumWidth(150)
+
+        # 供应商预设
+        self.llmPresetCard = ComboBoxSettingCard(
+            cfg.llm_active_preset_name,
+            FIF.SAVE,
+            self.tr("LLM 预设"),
+            self.tr("选择已保存的供应商配置预设"),
+            texts=[],
+            parent=self.llmGroup,
+        )
+        self.savePresetAsCard = PushSettingCard(
+            self.tr("新建"),
+            FIF.ADD,
+            self.tr("保存当前为预设"),
+            self.tr("保存当前供应商配置（包含 API Key）"),
+            self.llmGroup,
+        )
+        self.overwritePresetCard = PushSettingCard(
+            self.tr("覆盖"),
+            FIF.SAVE,
+            self.tr("覆盖当前预设"),
+            self.tr("使用当前输入覆盖已选预设"),
+            self.llmGroup,
+        )
+        self.deletePresetCard = PushSettingCard(
+            self.tr("删除"),
+            FIF.DELETE,
+            self.tr("删除当前预设"),
+            self.tr("删除已选预设配置"),
+            self.llmGroup,
+        )
 
         # 创建OPENAI官方API链接卡片
         self.openaiOfficialApiCard = HyperlinkCard(
@@ -290,6 +328,8 @@ class SettingInterface(ScrollArea):
                 "api_key_cfg": cfg.openai_api_key,
                 "api_base_cfg": cfg.openai_api_base,
                 "model_cfg": cfg.openai_model,
+                "extra_params_cfg": cfg.openai_extra_params,
+                "structured_outputs_cfg": cfg.openai_use_structured_outputs,
                 "default_base": "https://api.openai.com/v1",
                 "default_models": [
                     "gemini-2.5-pro",
@@ -304,6 +344,8 @@ class SettingInterface(ScrollArea):
                 "api_key_cfg": cfg.silicon_cloud_api_key,
                 "api_base_cfg": cfg.silicon_cloud_api_base,
                 "model_cfg": cfg.silicon_cloud_model,
+                "extra_params_cfg": cfg.silicon_cloud_extra_params,
+                "structured_outputs_cfg": cfg.silicon_cloud_use_structured_outputs,
                 "default_base": "https://api.siliconflow.cn/v1",
                 "default_models": [
                     "moonshotai/Kimi-K2-Instruct-0905",
@@ -315,6 +357,8 @@ class SettingInterface(ScrollArea):
                 "api_key_cfg": cfg.deepseek_api_key,
                 "api_base_cfg": cfg.deepseek_api_base,
                 "model_cfg": cfg.deepseek_model,
+                "extra_params_cfg": cfg.deepseek_extra_params,
+                "structured_outputs_cfg": cfg.deepseek_use_structured_outputs,
                 "default_base": "https://api.deepseek.com/v1",
                 "default_models": ["deepseek-chat", "deepseek-reasoner"],
             },
@@ -323,6 +367,8 @@ class SettingInterface(ScrollArea):
                 "api_key_cfg": cfg.ollama_api_key,
                 "api_base_cfg": cfg.ollama_api_base,
                 "model_cfg": cfg.ollama_model,
+                "extra_params_cfg": cfg.ollama_extra_params,
+                "structured_outputs_cfg": cfg.ollama_use_structured_outputs,
                 "default_base": "http://localhost:11434/v1",
                 "default_models": ["qwen3:8b"],
             },
@@ -331,6 +377,8 @@ class SettingInterface(ScrollArea):
                 "api_key_cfg": cfg.lm_studio_api_key,
                 "api_base_cfg": cfg.lm_studio_api_base,
                 "model_cfg": cfg.lm_studio_model,
+                "extra_params_cfg": cfg.lm_studio_extra_params,
+                "structured_outputs_cfg": cfg.lm_studio_use_structured_outputs,
                 "default_base": "http://localhost:1234/v1",
                 "default_models": ["qwen3:8b"],
             },
@@ -339,6 +387,8 @@ class SettingInterface(ScrollArea):
                 "api_key_cfg": cfg.gemini_api_key,
                 "api_base_cfg": cfg.gemini_api_base,
                 "model_cfg": cfg.gemini_model,
+                "extra_params_cfg": cfg.gemini_extra_params,
+                "structured_outputs_cfg": cfg.gemini_use_structured_outputs,
                 "default_base": "https://generativelanguage.googleapis.com/v1beta/openai/",
                 "default_models": [
                     "gemini-2.5-pro",
@@ -351,6 +401,8 @@ class SettingInterface(ScrollArea):
                 "api_key_cfg": cfg.chatglm_api_key,
                 "api_base_cfg": cfg.chatglm_api_base,
                 "model_cfg": cfg.chatglm_model,
+                "extra_params_cfg": cfg.chatglm_extra_params,
+                "structured_outputs_cfg": cfg.chatglm_use_structured_outputs,
                 "default_base": "https://open.bigmodel.cn/api/paas/v4",
                 "default_models": ["glm-4-plus", "glm-4-air-250414", "glm-4-flash"],
             },
@@ -404,14 +456,43 @@ class SettingInterface(ScrollArea):
             )
             setattr(self, f"{prefix}_model_card", model_card)
 
+            # 创建自定义参数卡片（供应商独立）
+            extra_params_card = LineEditSettingCard(
+                config["extra_params_cfg"],
+                FIF.CODE,
+                self.tr("LLM 自定义参数"),
+                self.tr('JSON对象，例如 {"reasoning":{"effort":"high"}}'),
+                '{"reasoning":{"effort":"high"}}',
+                self.llmGroup,
+            )
+            setattr(self, f"{prefix}_extra_params_card", extra_params_card)
+
+            # 创建结构化输出卡片（供应商独立）
+            structured_outputs_card = SwitchSettingCard(
+                FIF.CODE,
+                self.tr("结构化输出"),
+                self.tr("仅用于 LLM 翻译流程，需模型服务支持"),
+                config["structured_outputs_cfg"],
+                self.llmGroup,
+            )
+            setattr(self, f"{prefix}_structured_outputs_card", structured_outputs_card)
+
             # 存储服务配置
-            cards = [api_key_card, api_base_card, model_card]
+            cards = [
+                api_key_card,
+                api_base_card,
+                model_card,
+                extra_params_card,
+                structured_outputs_card,
+            ]
 
             self.llm_service_configs[service] = {
                 "cards": cards,
                 "api_base": api_base_card,
                 "api_key": api_key_card,
                 "model": model_card,
+                "extra_params": extra_params_card,
+                "structured_outputs": structured_outputs_card,
             }
 
         # 创建检查连接卡片
@@ -422,6 +503,8 @@ class SettingInterface(ScrollArea):
             self.tr("点击检查 API 连接是否正常，并获取模型列表"),
             self.llmGroup,
         )
+
+        self.__refreshLLMPresetItems()
 
         # 初始化显示状态
         self.__onLLMServiceChanged(self.llmServiceCard.comboBox.currentText())
@@ -605,6 +688,10 @@ class SettingInterface(ScrollArea):
 
         # 添加LLM配置卡片
         self.llmGroup.addSettingCard(self.llmServiceCard)
+        self.llmGroup.addSettingCard(self.llmPresetCard)
+        self.llmGroup.addSettingCard(self.savePresetAsCard)
+        self.llmGroup.addSettingCard(self.overwritePresetCard)
+        self.llmGroup.addSettingCard(self.deletePresetCard)
         # 添加OPENAI官方API链接卡片
         self.llmGroup.addSettingCard(self.openaiOfficialApiCard)
         for config in self.llm_service_configs.values():
@@ -632,6 +719,10 @@ class SettingInterface(ScrollArea):
         self.llmServiceCard.comboBox.currentTextChanged.connect(
             self.__onLLMServiceChanged
         )
+        self.llmPresetCard.comboBox.currentTextChanged.connect(self.__onLLMPresetChanged)
+        self.savePresetAsCard.clicked.connect(self.__saveCurrentAsPreset)
+        self.overwritePresetCard.clicked.connect(self.__overwriteCurrentPreset)
+        self.deletePresetCard.clicked.connect(self.__deleteCurrentPreset)
 
         # 翻译服务切换
         self.translatorServiceCard.comboBox.currentTextChanged.connect(
@@ -859,6 +950,184 @@ class SettingInterface(ScrollArea):
         # 更新布局
         self.llmGroup.adjustSize()
         self.expandLayout.update()
+        self.__updatePresetActionState()
+
+    def __loadLLMPresets(self) -> list[dict[str, Any]]:
+        return parse_llm_provider_presets(cfg.get(cfg.llm_provider_presets))
+
+    def __saveLLMPresets(self, presets: list[dict[str, Any]]) -> None:
+        cfg.set(
+            cfg.llm_provider_presets,
+            json.dumps(presets, ensure_ascii=False, sort_keys=True),
+        )
+
+    def __refreshLLMPresetItems(self) -> None:
+        presets = self.__loadLLMPresets()
+        names = [str(item.get("name", "")).strip() for item in presets]
+        names = [name for name in names if name]
+        active_name = cfg.get(cfg.llm_active_preset_name).strip()
+
+        self._updating_preset_ui = True
+        self.llmPresetCard.comboBox.clear()
+        self.llmPresetCard.comboBox.addItem("")
+        if names:
+            self.llmPresetCard.comboBox.addItems(names)
+
+        if active_name and active_name in names:
+            self.llmPresetCard.comboBox.setCurrentText(active_name)
+        else:
+            self.llmPresetCard.comboBox.setCurrentText("")
+            cfg.set(cfg.llm_active_preset_name, "")
+        self._updating_preset_ui = False
+        self.__updatePresetActionState()
+
+    def __updatePresetActionState(self) -> None:
+        has_active = bool(self.llmPresetCard.comboBox.currentText().strip())
+        self.overwritePresetCard.button.setEnabled(has_active)
+        self.deletePresetCard.button.setEnabled(has_active)
+
+    def __getCurrentServiceSnapshot(self) -> dict[str, Any]:
+        current_service = LLMServiceEnum(self.llmServiceCard.comboBox.currentText())
+        service_config = self.llm_service_configs[current_service]
+        _, structured_item = get_provider_param_items(current_service)
+        return {
+            "provider": current_service.value,
+            "api_key": service_config["api_key"].lineEdit.text().strip(),
+            "api_base": service_config["api_base"].lineEdit.text().strip(),
+            "model": service_config["model"].comboBox.currentText().strip(),
+            "llm_extra_params": service_config["extra_params"].lineEdit.text().strip(),
+            "use_structured_outputs": bool(cfg.get(structured_item)),
+        }
+
+    def __applyPreset(self, preset: dict[str, Any]) -> None:
+        provider_text = str(preset.get("provider", "")).strip()
+        if not provider_text:
+            return
+
+        try:
+            provider = LLMServiceEnum(provider_text)
+        except ValueError:
+            return
+
+        self.llmServiceCard.comboBox.setCurrentText(provider.value)
+        service_config = self.llm_service_configs.get(provider)
+        if not service_config:
+            return
+
+        service_config["api_key"].lineEdit.setText(str(preset.get("api_key", "")))
+        service_config["api_base"].lineEdit.setText(str(preset.get("api_base", "")))
+        service_config["model"].comboBox.setCurrentText(str(preset.get("model", "")))
+        service_config["extra_params"].lineEdit.setText(
+            str(preset.get("llm_extra_params", ""))
+        )
+        _, structured_item = get_provider_param_items(provider)
+        cfg.set(structured_item, bool(preset.get("use_structured_outputs", False)))
+
+    def __savePresetByName(self, name: str, overwrite: bool) -> bool:
+        clean_name = name.strip()
+        if not clean_name:
+            InfoBar.warning(
+                self.tr("名称为空"),
+                self.tr("请输入有效的预设名称"),
+                duration=INFOBAR_DURATION_WARNING,
+                parent=self,
+            )
+            return False
+
+        presets = self.__loadLLMPresets()
+        existing_index = next(
+            (i for i, item in enumerate(presets) if item.get("name") == clean_name),
+            -1,
+        )
+        snapshot = self.__getCurrentServiceSnapshot()
+        snapshot["name"] = clean_name
+
+        if existing_index >= 0 and not overwrite:
+            InfoBar.warning(
+                self.tr("名称重复"),
+                self.tr("预设名称已存在，请使用其他名称"),
+                duration=INFOBAR_DURATION_WARNING,
+                parent=self,
+            )
+            return False
+
+        if existing_index >= 0:
+            presets[existing_index] = snapshot
+        else:
+            presets.append(snapshot)
+
+        self.__saveLLMPresets(presets)
+        cfg.set(cfg.llm_active_preset_name, clean_name)
+        self.__refreshLLMPresetItems()
+        return True
+
+    def __saveCurrentAsPreset(self) -> None:
+        dialog = PresetNameDialog(self)
+        if not dialog.exec():
+            return
+
+        if self.__savePresetByName(dialog.nameLineEdit.text(), overwrite=False):
+            InfoBar.success(
+                self.tr("保存成功"),
+                self.tr("已保存新的 LLM 预设"),
+                duration=INFOBAR_DURATION_SUCCESS,
+                parent=self,
+            )
+
+    def __overwriteCurrentPreset(self) -> None:
+        current_name = self.llmPresetCard.comboBox.currentText().strip()
+        if not current_name:
+            InfoBar.warning(
+                self.tr("未选择预设"),
+                self.tr("请先选择需要覆盖的预设"),
+                duration=INFOBAR_DURATION_WARNING,
+                parent=self,
+            )
+            return
+
+        if self.__savePresetByName(current_name, overwrite=True):
+            InfoBar.success(
+                self.tr("覆盖成功"),
+                self.tr("已覆盖当前 LLM 预设"),
+                duration=INFOBAR_DURATION_SUCCESS,
+                parent=self,
+            )
+
+    def __deleteCurrentPreset(self) -> None:
+        current_name = self.llmPresetCard.comboBox.currentText().strip()
+        if not current_name:
+            return
+
+        presets = self.__loadLLMPresets()
+        presets = [item for item in presets if item.get("name") != current_name]
+        self.__saveLLMPresets(presets)
+        cfg.set(cfg.llm_active_preset_name, "")
+        self.__refreshLLMPresetItems()
+        InfoBar.success(
+            self.tr("删除成功"),
+            self.tr("已删除当前 LLM 预设"),
+            duration=INFOBAR_DURATION_SUCCESS,
+            parent=self,
+        )
+
+    def __onLLMPresetChanged(self, name: str) -> None:
+        if self._updating_preset_ui:
+            return
+
+        clean_name = name.strip()
+        cfg.set(cfg.llm_active_preset_name, clean_name)
+        self.__updatePresetActionState()
+        if not clean_name:
+            return
+
+        preset = next(
+            (item for item in self.__loadLLMPresets() if item.get("name") == clean_name),
+            None,
+        )
+        if preset is None:
+            return
+
+        self.__applyPreset(preset)
 
     def __onTranslatorServiceChanged(self, service):
         openai_cards = [
@@ -990,6 +1259,29 @@ class SettingInterface(ScrollArea):
             duration=INFOBAR_DURATION_ERROR,
             parent=self,
         )
+
+
+class PresetNameDialog(MessageBoxBase):
+    """LLM 预设名称输入对话框"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.titleLabel = BodyLabel(self.tr("保存 LLM 预设"), self)
+        self.nameLineEdit = LineEdit(self)
+        self.nameLineEdit.setPlaceholderText(self.tr("输入预设名称"))
+        self.nameLineEdit.setClearButtonEnabled(True)
+
+        self.viewLayout.addWidget(self.titleLabel)
+        self.viewLayout.addWidget(self.nameLineEdit)
+
+        self.yesButton.setText(self.tr("确定"))
+        self.cancelButton.setText(self.tr("取消"))
+        self.widget.setMinimumWidth(350)
+        self.yesButton.setDisabled(True)
+        self.nameLineEdit.textChanged.connect(self.__validateInput)
+
+    def __validateInput(self, text: str) -> None:
+        self.yesButton.setEnabled(bool(text.strip()))
 
 
 class WhisperConnectionThread(QThread):

@@ -42,7 +42,7 @@ class BaseTranslator(ABC):
     def translate_subtitle(self, subtitle_data: ASRData) -> ASRData:
         """翻译字幕文件"""
         try:
-            asr_data = subtitle_data
+            asr_data = self._preprocess_before_translate(subtitle_data)
 
             # 将ASRData转换为SubtitleProcessData列表
             translate_data_list = [
@@ -65,6 +65,10 @@ class BaseTranslator(ABC):
         except Exception as e:
             logger.error(f"Translation failed: {str(e)}")
             raise RuntimeError(f"Translation failed: {str(e)}")
+
+    def _preprocess_before_translate(self, subtitle_data: ASRData) -> ASRData:
+        """Hook for translators that need source cleanup before translation."""
+        return subtitle_data
 
     def _split_chunks(
         self, translate_data_list: List[SubtitleProcessData]

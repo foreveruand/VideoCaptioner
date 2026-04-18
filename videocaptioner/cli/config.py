@@ -36,6 +36,7 @@ ENV_MAP: Dict[str, str] = {
     "OPENAI_API_KEY": "llm.api_key",
     "OPENAI_BASE_URL": "llm.api_base",
     "OPENAI_MODEL": "llm.model",
+    "VIDEOCAPTIONER_LLM_EXTRA_PARAMS": "llm.extra_params",
     # VIDEOCAPTIONER_ prefixed (take precedence over standard)
     "VIDEOCAPTIONER_LLM_API_KEY": "llm.api_key",
     "VIDEOCAPTIONER_LLM_API_BASE": "llm.api_base",
@@ -66,6 +67,7 @@ DEFAULTS: Dict[str, Any] = {
         "api_key": "",
         "api_base": "https://api.openai.com/v1",
         "model": "gpt-4o-mini",
+        "extra_params": "",
     },
     "whisper_api": {
         "api_key": "",
@@ -102,6 +104,7 @@ DEFAULTS: Dict[str, Any] = {
         "service": "bing",
         "target_language": "zh-Hans",
         "reflect": False,
+        "structured_outputs": False,
         "deeplx_endpoint": "",
     },
     "synthesize": {

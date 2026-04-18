@@ -25,6 +25,8 @@ class TranslatorFactory:
         model: str = "gpt-4o-mini",
         custom_prompt: str = "",
         is_reflect: bool = False,
+        use_structured_outputs: bool = False,
+        llm_extra_params: object = None,
         update_callback: Optional[Callable] = None,
     ) -> BaseTranslator:
         """创建翻译器实例"""
@@ -41,6 +43,8 @@ class TranslatorFactory:
                     model=model,
                     custom_prompt=custom_prompt,
                     is_reflect=is_reflect,
+                    use_structured_outputs=use_structured_outputs,
+                    llm_extra_params=llm_extra_params,
                     update_callback=update_callback,
                 )
             elif translator_type == TranslatorType.GOOGLE:
