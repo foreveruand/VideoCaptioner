@@ -629,12 +629,14 @@ class SubtitleConfig:
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     llm_model: Optional[str] = None
+    llm_extra_params: Optional[str] = None
     deeplx_endpoint: Optional[str] = None
     # 翻译服务
     translator_service: Optional[TranslatorServiceEnum] = None
     need_translate: bool = False
     need_optimize: bool = False
     need_reflect: bool = False
+    use_structured_outputs: bool = False
     thread_num: int = 10
     batch_size: int = 10
     # 字幕布局和分割
@@ -676,7 +678,9 @@ class SubtitleConfig:
                 lines.append(f"  API Base: {self.base_url}")
                 lines.append(f"  API Key: {self._mask_key(self.api_key)}")
                 lines.append(f"  Model: {self.llm_model}")
+                lines.append(f"  Custom Parameters: {bool(self.llm_extra_params)}")
                 lines.append(f"  Reflect Translation: {self.need_reflect}")
+                lines.append(f"  Structured Outputs: {self.use_structured_outputs}")
             elif self.translator_service == TranslatorServiceEnum.DEEPLX:
                 lines.append(f"  DeepLX Endpoint: {self.deeplx_endpoint}")
             lines.append(

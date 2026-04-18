@@ -92,6 +92,7 @@ def run(args: Namespace, config: dict) -> int:
             api_key=getattr(args, "api_key", None),
             api_base=getattr(args, "api_base", None),
             model=getattr(args, "model", None),
+            llm_extra_params=getattr(args, "llm_extra_params", None),
             translator=getattr(args, "translator", None),
             target_language=getattr(args, "target_language", None),
             reflect=getattr(args, "reflect", False),

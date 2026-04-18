@@ -78,9 +78,13 @@ def run(args: Namespace, config: dict) -> int:
             return EXIT.USAGE_ERROR
     target_lang_code = get(config, "translate.target_language", "zh-Hans")
     need_reflect = get(config, "translate.reflect", False)
+    use_structured_outputs = get(config, "translate.structured_outputs", False)
     if need_reflect and translator_service in ("bing", "google"):
         output.warn("--reflect only works with LLM translator, ignored for " + translator_service)
         need_reflect = False
+    if use_structured_outputs and translator_service != "llm":
+        output.warn("--structured-outputs only works with LLM translator, ignored for " + translator_service)
+        use_structured_outputs = False
 
     # Warn on conflicting/ignored options
     if not need_translate and getattr(args, "layout", None):
@@ -140,6 +144,7 @@ def run(args: Namespace, config: dict) -> int:
     llm_api_key = get(config, "llm.api_key", "")
     llm_api_base = get(config, "llm.api_base", "")
     llm_model = get(config, "llm.model", "")
+    llm_extra_params = get(config, "llm.extra_params", "")
     if llm_api_key:
         os.environ["OPENAI_API_KEY"] = llm_api_key
     if llm_api_base:
@@ -192,8 +197,14 @@ def run(args: Namespace, config: dict) -> int:
                 model=llm_model,
                 max_word_count_cjk=max_cjk,
                 max_word_count_english=max_english,
+                llm_extra_params=llm_extra_params,
             )
             asr_data = splitter.split_subtitle(asr_data)
+
+        if need_optimize or need_translate:
+            from videocaptioner.core.subtitle.preprocess import preprocess_subtitle_before_llm
+
+            asr_data = preprocess_subtitle_before_llm(asr_data)
 
         # 2. Optimize
         if need_optimize:
@@ -205,6 +216,7 @@ def run(args: Namespace, config: dict) -> int:
                 batch_num=batch_size,
                 model=llm_model,
                 custom_prompt=custom_prompt,
+                llm_extra_params=llm_extra_params,
                 update_callback=callback,
             )
             asr_data = optimizer.optimize_subtitle(asr_data)
@@ -233,6 +245,8 @@ def run(args: Namespace, config: dict) -> int:
                 model=llm_model,
                 custom_prompt=custom_prompt,
                 is_reflect=need_reflect,
+                use_structured_outputs=use_structured_outputs,
+                llm_extra_params=llm_extra_params,
                 update_callback=callback,
             )
             asr_data = translator.translate_subtitle(asr_data)

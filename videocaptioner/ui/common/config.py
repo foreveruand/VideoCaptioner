@@ -1,5 +1,7 @@
 # coding:utf-8
+import json
 from enum import Enum
+from typing import Dict, Tuple
 
 from PyQt5.QtCore import QLocale
 from PyQt5.QtGui import QColor
@@ -88,11 +90,19 @@ class Config(QConfig):
     openai_model = ConfigItem("LLM", "OpenAI_Model", "gpt-4o-mini")
     openai_api_key = ConfigItem("LLM", "OpenAI_API_Key", "")
     openai_api_base = ConfigItem("LLM", "OpenAI_API_Base", "https://api.openai.com/v1")
+    openai_extra_params = ConfigItem("LLM", "OpenAI_ExtraParams", "")
+    openai_use_structured_outputs = ConfigItem(
+        "LLM", "OpenAI_UseStructuredOutputs", False, BoolValidator()
+    )
 
     silicon_cloud_model = ConfigItem("LLM", "SiliconCloud_Model", "gpt-4o-mini")
     silicon_cloud_api_key = ConfigItem("LLM", "SiliconCloud_API_Key", "")
     silicon_cloud_api_base = ConfigItem(
         "LLM", "SiliconCloud_API_Base", "https://api.siliconflow.cn/v1"
+    )
+    silicon_cloud_extra_params = ConfigItem("LLM", "SiliconCloud_ExtraParams", "")
+    silicon_cloud_use_structured_outputs = ConfigItem(
+        "LLM", "SiliconCloud_UseStructuredOutputs", False, BoolValidator()
     )
 
     deepseek_model = ConfigItem("LLM", "DeepSeek_Model", "deepseek-chat")
@@ -100,15 +110,27 @@ class Config(QConfig):
     deepseek_api_base = ConfigItem(
         "LLM", "DeepSeek_API_Base", "https://api.deepseek.com/v1"
     )
+    deepseek_extra_params = ConfigItem("LLM", "DeepSeek_ExtraParams", "")
+    deepseek_use_structured_outputs = ConfigItem(
+        "LLM", "DeepSeek_UseStructuredOutputs", False, BoolValidator()
+    )
 
     ollama_model = ConfigItem("LLM", "Ollama_Model", "llama2")
     ollama_api_key = ConfigItem("LLM", "Ollama_API_Key", "ollama")
     ollama_api_base = ConfigItem("LLM", "Ollama_API_Base", "http://localhost:11434/v1")
+    ollama_extra_params = ConfigItem("LLM", "Ollama_ExtraParams", "")
+    ollama_use_structured_outputs = ConfigItem(
+        "LLM", "Ollama_UseStructuredOutputs", False, BoolValidator()
+    )
 
     lm_studio_model = ConfigItem("LLM", "LmStudio_Model", "qwen2.5:7b")
     lm_studio_api_key = ConfigItem("LLM", "LmStudio_API_Key", "lmstudio")
     lm_studio_api_base = ConfigItem(
         "LLM", "LmStudio_API_Base", "http://localhost:1234/v1"
+    )
+    lm_studio_extra_params = ConfigItem("LLM", "LmStudio_ExtraParams", "")
+    lm_studio_use_structured_outputs = ConfigItem(
+        "LLM", "LmStudio_UseStructuredOutputs", False, BoolValidator()
     )
 
     gemini_model = ConfigItem("LLM", "Gemini_Model", "gemini-pro")
@@ -118,12 +140,25 @@ class Config(QConfig):
         "Gemini_API_Base",
         "https://generativelanguage.googleapis.com/v1beta/openai/",
     )
+    gemini_extra_params = ConfigItem("LLM", "Gemini_ExtraParams", "")
+    gemini_use_structured_outputs = ConfigItem(
+        "LLM", "Gemini_UseStructuredOutputs", False, BoolValidator()
+    )
 
     chatglm_model = ConfigItem("LLM", "ChatGLM_Model", "glm-4")
     chatglm_api_key = ConfigItem("LLM", "ChatGLM_API_Key", "")
     chatglm_api_base = ConfigItem(
         "LLM", "ChatGLM_API_Base", "https://open.bigmodel.cn/api/paas/v4"
     )
+    chatglm_extra_params = ConfigItem("LLM", "ChatGLM_ExtraParams", "")
+    chatglm_use_structured_outputs = ConfigItem(
+        "LLM", "ChatGLM_UseStructuredOutputs", False, BoolValidator()
+    )
+    llm_provider_presets = ConfigItem("LLM", "ProviderPresets", "[]")
+    llm_active_preset_name = ConfigItem("LLM", "ActivePresetName", "")
+
+    # legacy fields (for one-time migration only)
+    llm_extra_params = ConfigItem("LLM", "ExtraParams", "")
 
     # ------------------- 翻译配置 -------------------
     translator_service = OptionsConfigItem(
@@ -136,8 +171,11 @@ class Config(QConfig):
     need_reflect_translate = ConfigItem(
         "Translate", "NeedReflectTranslate", False, BoolValidator()
     )
+    use_structured_outputs = ConfigItem(
+        "Translate", "UseStructuredOutputs", False, BoolValidator()
+    )
     deeplx_endpoint = ConfigItem("Translate", "DeeplxEndpoint", "")
-    batch_size = RangeConfigItem("Translate", "BatchSize", 10, RangeValidator(5, 50))
+    batch_size = RangeConfigItem("Translate", "BatchSize", 10, RangeValidator(5, 5000))
     thread_num = RangeConfigItem("Translate", "ThreadNum", 10, RangeValidator(1, 50))
 
     # ------------------- 转录配置 -------------------
@@ -332,3 +370,79 @@ cfg = Config()
 cfg.themeMode.value = Theme.DARK
 cfg.themeColor.value = QColor("#ff28f08b")
 qconfig.load(SETTINGS_PATH, cfg)
+
+LLM_PROVIDER_PARAM_ITEMS: Dict[
+    LLMServiceEnum, Tuple[ConfigItem, ConfigItem]
+] = {
+    LLMServiceEnum.OPENAI: (
+        cfg.openai_extra_params,
+        cfg.openai_use_structured_outputs,
+    ),
+    LLMServiceEnum.SILICON_CLOUD: (
+        cfg.silicon_cloud_extra_params,
+        cfg.silicon_cloud_use_structured_outputs,
+    ),
+    LLMServiceEnum.DEEPSEEK: (
+        cfg.deepseek_extra_params,
+        cfg.deepseek_use_structured_outputs,
+    ),
+    LLMServiceEnum.OLLAMA: (
+        cfg.ollama_extra_params,
+        cfg.ollama_use_structured_outputs,
+    ),
+    LLMServiceEnum.LM_STUDIO: (
+        cfg.lm_studio_extra_params,
+        cfg.lm_studio_use_structured_outputs,
+    ),
+    LLMServiceEnum.GEMINI: (
+        cfg.gemini_extra_params,
+        cfg.gemini_use_structured_outputs,
+    ),
+    LLMServiceEnum.CHATGLM: (
+        cfg.chatglm_extra_params,
+        cfg.chatglm_use_structured_outputs,
+    ),
+}
+
+
+def get_provider_param_items(service: LLMServiceEnum) -> Tuple[ConfigItem, ConfigItem]:
+    return LLM_PROVIDER_PARAM_ITEMS[service]
+
+
+def parse_llm_provider_presets(raw: str) -> list[dict]:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    result = []
+    for item in parsed:
+        if isinstance(item, dict):
+            result.append(item)
+    return result
+
+
+def migrate_legacy_llm_settings_if_needed() -> None:
+    """Migrate old global LLM params to current provider-scoped settings once."""
+    legacy_extra = cfg.get(cfg.llm_extra_params).strip()
+    legacy_structured = bool(cfg.get(cfg.use_structured_outputs))
+
+    if not legacy_extra and not legacy_structured:
+        return
+
+    service = cfg.get(cfg.llm_service)
+    extra_item, structured_item = get_provider_param_items(service)
+    if legacy_extra and not cfg.get(extra_item).strip():
+        cfg.set(extra_item, legacy_extra)
+
+    if legacy_structured and not bool(cfg.get(structured_item)):
+        cfg.set(structured_item, True)
+
+    cfg.set(cfg.llm_extra_params, "")
+    cfg.set(cfg.use_structured_outputs, False)
+
+
+migrate_legacy_llm_settings_if_needed()

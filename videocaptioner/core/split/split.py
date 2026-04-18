@@ -1,9 +1,10 @@
 import atexit
 import difflib
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Union
+from typing import Any, List, Union
 
 from videocaptioner.core.asr.asr_data import ASRData, ASRDataSeg
+from videocaptioner.core.llm.params import parse_llm_extra_params
 from videocaptioner.core.split.split_by_llm import split_by_llm
 from videocaptioner.core.utils.logger import setup_logger
 from videocaptioner.core.utils.text_utils import (
@@ -94,6 +95,8 @@ class SubtitleSplitter:
         model,
         max_word_count_cjk: int = MAX_WORD_COUNT_CJK,
         max_word_count_english: int = MAX_WORD_COUNT_ENGLISH,
+        use_llm: bool = True,
+        llm_extra_params: Any = None,
     ):
         """初始化分割器
 
@@ -102,11 +105,15 @@ class SubtitleSplitter:
             model: LLM模型名称
             max_word_count_cjk: CJK最大字数
             max_word_count_english: 英文最大单词数
+            use_llm: 是否优先使用LLM智能断句
+            llm_extra_params: 额外LLM请求参数
         """
         self.thread_num = thread_num
         self.model = model
         self.max_word_count_cjk = max_word_count_cjk
         self.max_word_count_english = max_word_count_english
+        self.use_llm = use_llm
+        self.llm_extra_params = parse_llm_extra_params(llm_extra_params)
         self.is_running = True
         self._init_thread_pool()
 
@@ -270,6 +277,8 @@ class SubtitleSplitter:
         """处理单个Segments(带重试和降级)"""
         if not asr_data_part.segments:
             return []
+        if not self.use_llm:
+            return self._process_by_rules(asr_data_part.segments)
         try:
             return self._process_by_llm(asr_data_part.segments)
         except Exception as e:
@@ -293,6 +302,7 @@ class SubtitleSplitter:
             model=self.model,
             max_word_count_cjk=self.max_word_count_cjk,
             max_word_count_english=self.max_word_count_english,
+            llm_extra_params=self.llm_extra_params,
         )
 
         return self._merge_segments_based_on_sentences(segments, sentences)

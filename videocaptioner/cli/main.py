@@ -28,6 +28,7 @@ def _add_llm_options(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--api-base", metavar="URL",
                        help="LLM API base URL (or set OPENAI_BASE_URL env var)")
     group.add_argument("--model", metavar="NAME", help="LLM model name (e.g. gpt-4o-mini)")
+    group.add_argument("--llm-extra-params", metavar="JSON", help="Extra JSON parameters for LLM requests")
 
 
 def _add_output_options(parser: argparse.ArgumentParser) -> None:
@@ -143,6 +144,7 @@ def _build_subtitle_parser(subparsers) -> None:
     llm.add_argument("--api-base", metavar="URL",
                      help="LLM API base URL (or set OPENAI_BASE_URL env var)")
     llm.add_argument("--model", metavar="NAME", help="LLM model name (e.g. gpt-4o-mini)")
+    llm.add_argument("--llm-extra-params", metavar="JSON", help="Extra JSON parameters for LLM requests")
 
     _add_output_options(p)
 
@@ -164,6 +166,11 @@ def _build_subtitle_parser(subparsers) -> None:
     )
     trans.add_argument("--reflect", action="store_true",
                        help="Enable reflective translation (LLM only, higher quality)")
+    trans.add_argument(
+        "--structured-outputs",
+        action="store_true",
+        help="Use OpenAI Structured Outputs for LLM translation when supported",
+    )
 
     sub = p.add_argument_group("Subtitle options")
     sub.add_argument("--max-cjk", type=int, metavar="N", help="Max characters per line for CJK text (default: 18)")
@@ -253,6 +260,11 @@ def _build_process_parser(subparsers) -> None:
                       help="Translation service (default: llm). bing and google are free")
     pipe.add_argument("--target-language", metavar="CODE", help="Target language BCP 47 code (default: zh-Hans)")
     pipe.add_argument("--reflect", action="store_true", help="Reflective translation (LLM only)")
+    pipe.add_argument(
+        "--structured-outputs",
+        action="store_true",
+        help="Use OpenAI Structured Outputs for LLM translation when supported",
+    )
     pipe.add_argument("--quality", choices=["ultra", "high", "medium", "low"], help="Video quality (default: medium)")
     pipe.add_argument("--subtitle-mode", choices=["soft", "hard"], help="Subtitle mode (default: soft)")
     pipe.add_argument("--layout", choices=["target-above", "source-above", "target-only", "source-only"],
@@ -367,6 +379,7 @@ def _build_cli_overrides(args: argparse.Namespace) -> dict:
     _set("llm.api_key", getattr(args, "api_key", None))
     _set("llm.api_base", getattr(args, "api_base", None))
     _set("llm.model", getattr(args, "model", None))
+    _set("llm.extra_params", getattr(args, "llm_extra_params", None))
 
     # Whisper API
     _set("whisper_api.api_key", getattr(args, "whisper_api_key", None))
@@ -406,6 +419,8 @@ def _build_cli_overrides(args: argparse.Namespace) -> dict:
     _set("translate.target_language", getattr(args, "target_language", None))
     if getattr(args, "reflect", False):
         _set("translate.reflect", True)
+    if getattr(args, "structured_outputs", False):
+        _set("translate.structured_outputs", True)
 
     # Synthesize / Layout / Style
     _set("synthesize.subtitle_mode", getattr(args, "subtitle_mode", None))
