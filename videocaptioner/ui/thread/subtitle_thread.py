@@ -25,6 +25,8 @@ from videocaptioner.core.subtitle.preprocess import preprocess_subtitle_before_l
 from videocaptioner.core.translate.factory import TranslatorFactory
 from videocaptioner.core.translate.types import TranslatorType
 from videocaptioner.core.utils.logger import setup_logger
+from videocaptioner.core.utils.work_dir_mapping import get_or_create_work_dir_short_name
+from videocaptioner.ui.common.config import cfg
 
 SERVICE_TO_TYPE = {
     TranslatorServiceEnum.OPENAI: TranslatorType.OPENAI,
@@ -195,10 +197,15 @@ class SubtitleThread(QThread):
 
                 # 保存翻译结果(单语、双语)
                 if self.task.need_next_task and self.task.video_path:
+                    short_name = get_or_create_work_dir_short_name(
+                        source_path=self.task.video_path,
+                        work_dir=str(cfg.work_dir.value),
+                        prefix="video",
+                    )
                     for layout in SubtitleLayoutEnum:
                         save_path = str(
                             Path(self.task.subtitle_path).parent
-                            / f"{Path(self.task.video_path).stem}-{layout.value}.srt"
+                            / f"{short_name}-{layout.value}.srt"
                         )
                         asr_data.save(
                             save_path=save_path,
@@ -233,6 +240,8 @@ class SubtitleThread(QThread):
                     layout=subtitle_config.subtitle_layout,
                     style_str=subtitle_config.subtitle_style,
                 )
+                # 全流程结束后，优先返回源文件目录下的字幕路径（源文件名）
+                self.task.output_path = str(save_ass_path)
 
             self.progress.emit(100, self.tr("优化完成"))
             logger.info("优化完成")

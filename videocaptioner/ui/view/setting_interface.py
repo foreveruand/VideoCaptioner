@@ -21,6 +21,7 @@ from qfluentwidgets import (
     ScrollArea,
     SettingCardGroup,
     SwitchSettingCard,
+    PushButton,
     setTheme,
     setThemeColor,
 )
@@ -279,35 +280,25 @@ class SettingInterface(ScrollArea):
         self.llmServiceCard.comboBox.setMinimumWidth(150)
 
         # 供应商预设
-        self.llmPresetCard = ComboBoxSettingCard(
+        self.llmPresetCard = EditComboBoxSettingCard(
             cfg.llm_active_preset_name,
             FIF.SAVE,
             self.tr("LLM 预设"),
             self.tr("选择已保存的供应商配置预设"),
-            texts=[],
-            parent=self.llmGroup,
-        )
-        self.savePresetAsCard = PushSettingCard(
-            self.tr("新建"),
-            FIF.ADD,
-            self.tr("保存当前为预设"),
-            self.tr("保存当前供应商配置（包含 API Key）"),
+            [],
             self.llmGroup,
         )
-        self.overwritePresetCard = PushSettingCard(
-            self.tr("覆盖"),
-            FIF.SAVE,
-            self.tr("覆盖当前预设"),
-            self.tr("使用当前输入覆盖已选预设"),
-            self.llmGroup,
-        )
-        self.deletePresetCard = PushSettingCard(
-            self.tr("删除"),
-            FIF.DELETE,
-            self.tr("删除当前预设"),
-            self.tr("删除已选预设配置"),
-            self.llmGroup,
-        )
+        self.llmPresetCard.comboBox.setMinimumWidth(220)
+        self.presetCreateButton = PushButton(self.tr("新建"), self.llmPresetCard)
+        self.presetOverwriteButton = PushButton(self.tr("覆盖"), self.llmPresetCard)
+        self.presetDeleteButton = PushButton(self.tr("删除"), self.llmPresetCard)
+        for btn in (
+            self.presetCreateButton,
+            self.presetOverwriteButton,
+            self.presetDeleteButton,
+        ):
+            btn.setFixedWidth(56)
+            self.llmPresetCard.hBoxLayout.addWidget(btn, 0, Qt.AlignRight)  # type: ignore
 
         # 创建OPENAI官方API链接卡片
         self.openaiOfficialApiCard = HyperlinkCard(
@@ -461,8 +452,10 @@ class SettingInterface(ScrollArea):
                 config["extra_params_cfg"],
                 FIF.CODE,
                 self.tr("LLM 自定义参数"),
-                self.tr('JSON对象，例如 {"reasoning":{"effort":"high"}}'),
-                '{"reasoning":{"effort":"high"}}',
+                self.tr(
+                    'JSON对象，例如 {"reasoning_effort":"high"} 或 {"reasoning":{"effort":"high"}}'
+                ),
+                '{"reasoning_effort":"high"}',
                 self.llmGroup,
             )
             setattr(self, f"{prefix}_extra_params_card", extra_params_card)
@@ -491,6 +484,7 @@ class SettingInterface(ScrollArea):
                 "api_base": api_base_card,
                 "api_key": api_key_card,
                 "model": model_card,
+                "model_cfg": config["model_cfg"],
                 "extra_params": extra_params_card,
                 "structured_outputs": structured_outputs_card,
             }
@@ -687,11 +681,8 @@ class SettingInterface(ScrollArea):
         self.transcribeGroup.addSettingCard(self.checkWhisperConnectionCard)
 
         # 添加LLM配置卡片
-        self.llmGroup.addSettingCard(self.llmServiceCard)
         self.llmGroup.addSettingCard(self.llmPresetCard)
-        self.llmGroup.addSettingCard(self.savePresetAsCard)
-        self.llmGroup.addSettingCard(self.overwritePresetCard)
-        self.llmGroup.addSettingCard(self.deletePresetCard)
+        self.llmGroup.addSettingCard(self.llmServiceCard)
         # 添加OPENAI官方API链接卡片
         self.llmGroup.addSettingCard(self.openaiOfficialApiCard)
         for config in self.llm_service_configs.values():
@@ -720,9 +711,9 @@ class SettingInterface(ScrollArea):
             self.__onLLMServiceChanged
         )
         self.llmPresetCard.comboBox.currentTextChanged.connect(self.__onLLMPresetChanged)
-        self.savePresetAsCard.clicked.connect(self.__saveCurrentAsPreset)
-        self.overwritePresetCard.clicked.connect(self.__overwriteCurrentPreset)
-        self.deletePresetCard.clicked.connect(self.__deleteCurrentPreset)
+        self.presetCreateButton.clicked.connect(self.__saveCurrentAsPreset)
+        self.presetOverwriteButton.clicked.connect(self.__overwriteCurrentPreset)
+        self.presetDeleteButton.clicked.connect(self.__deleteCurrentPreset)
 
         # 翻译服务切换
         self.translatorServiceCard.comboBox.currentTextChanged.connect(
@@ -843,8 +834,8 @@ class SettingInterface(ScrollArea):
             else ""
         )
         model = (
-            service_config["model"].comboBox.currentText()
-            if service_config["model"]
+            cfg.get(service_config["model_cfg"]).strip()
+            if service_config.get("model_cfg")
             else ""
         )
 
@@ -886,7 +877,7 @@ class SettingInterface(ScrollArea):
             if service_config and service_config["model"]:
                 temp = service_config["model"].comboBox.currentText()
                 service_config["model"].setItems(models)
-                service_config["model"].comboBox.setCurrentText(temp)
+                service_config["model"].setValue(temp)
 
             InfoBar.success(
                 self.tr("获取模型列表成功:"),
@@ -983,8 +974,8 @@ class SettingInterface(ScrollArea):
 
     def __updatePresetActionState(self) -> None:
         has_active = bool(self.llmPresetCard.comboBox.currentText().strip())
-        self.overwritePresetCard.button.setEnabled(has_active)
-        self.deletePresetCard.button.setEnabled(has_active)
+        self.presetOverwriteButton.setEnabled(has_active)
+        self.presetDeleteButton.setEnabled(has_active)
 
     def __getCurrentServiceSnapshot(self) -> dict[str, Any]:
         current_service = LLMServiceEnum(self.llmServiceCard.comboBox.currentText())
@@ -994,7 +985,7 @@ class SettingInterface(ScrollArea):
             "provider": current_service.value,
             "api_key": service_config["api_key"].lineEdit.text().strip(),
             "api_base": service_config["api_base"].lineEdit.text().strip(),
-            "model": service_config["model"].comboBox.currentText().strip(),
+            "model": cfg.get(service_config["model_cfg"]).strip(),
             "llm_extra_params": service_config["extra_params"].lineEdit.text().strip(),
             "use_structured_outputs": bool(cfg.get(structured_item)),
         }
@@ -1016,7 +1007,7 @@ class SettingInterface(ScrollArea):
 
         service_config["api_key"].lineEdit.setText(str(preset.get("api_key", "")))
         service_config["api_base"].lineEdit.setText(str(preset.get("api_base", "")))
-        service_config["model"].comboBox.setCurrentText(str(preset.get("model", "")))
+        service_config["model"].setValue(str(preset.get("model", "")))
         service_config["extra_params"].lineEdit.setText(
             str(preset.get("llm_extra_params", ""))
         )

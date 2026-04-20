@@ -15,6 +15,7 @@ from videocaptioner.core.entities import (
     TranscribeTask,
     TranscriptAndSubtitleTask,
 )
+from videocaptioner.core.utils.work_dir_mapping import get_or_create_work_dir_short_name
 from videocaptioner.ui.common.config import cfg, get_provider_param_items
 
 
@@ -59,12 +60,20 @@ class TaskFactory:
 
         # 构建输出路径
         if need_next_task:
+            short_name = get_or_create_work_dir_short_name(
+                source_path=file_path,
+                work_dir=str(cfg.work_dir.value),
+                prefix="video",
+            )
             need_word_time_stamp = cfg.faster_whisper_one_word.value
             output_path = str(
                 Path(cfg.work_dir.value)
-                / file_name
+                / short_name
                 / "subtitle"
-                / f"【原始字幕】{file_name}-{cfg.transcribe_model.value.value}-{cfg.transcribe_language.value.value}.srt"
+                / (
+                    f"【原始字幕】{short_name}-"
+                    f"{cfg.transcribe_model.value.value}-{cfg.transcribe_language.value.value}.srt"
+                )
             )
         else:
             need_word_time_stamp = False
@@ -123,8 +132,17 @@ class TaskFactory:
         )
 
         if need_next_task:
+            source_for_mapping = video_path or file_path
+            short_name = get_or_create_work_dir_short_name(
+                source_path=source_for_mapping,
+                work_dir=str(cfg.work_dir.value),
+                prefix="video",
+            )
             output_path = str(
-                Path(file_path).parent / f"【样式字幕】{output_name}{suffix}.ass"
+                Path(cfg.work_dir.value)
+                / short_name
+                / "subtitle"
+                / f"【样式字幕】{short_name}{suffix}.ass"
             )
         else:
             output_path = str(
