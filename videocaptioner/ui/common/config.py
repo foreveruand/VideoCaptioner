@@ -275,6 +275,12 @@ class Config(QConfig):
     max_word_count_english = ConfigItem(
         "Subtitle", "MaxWordCountEnglish", 20, RangeValidator(8, 100)
     )
+    llm_chunk_target_multiplier = ConfigItem(
+        "Subtitle", "LLMChunkTargetMultiplier", 8, RangeValidator(1, 50)
+    )
+    llm_split_soft_limit_ratio = ConfigItem(
+        "Subtitle", "LLMSplitSoftLimitRatio", 1.1, RangeValidator(1.0, 2.0)
+    )
     custom_prompt_text = ConfigItem("Subtitle", "CustomPromptText", "")
 
     # ------------------- 字幕合成配置 -------------------

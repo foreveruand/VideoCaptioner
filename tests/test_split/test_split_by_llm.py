@@ -8,8 +8,66 @@ Requires environment variables:
 
 
 import pytest
+import re
+from types import SimpleNamespace
 
 from videocaptioner.core.split.split_by_llm import count_words, split_by_llm
+
+
+def _make_response(content: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+    )
+
+
+@pytest.fixture
+def mock_llm_client(monkeypatch):
+    """为 split_by_llm 提供稳定的伪 LLM 响应。"""
+
+    def split_cjk_part(part: str, limit: int) -> list[str]:
+        if count_words(part) <= limit:
+            return [part]
+        return [part[i : i + limit] for i in range(0, len(part), limit)]
+
+    def split_space_part(part: str, limit: int) -> list[str]:
+        words = part.split()
+        if len(words) <= limit:
+            return [part]
+        return [
+            " ".join(words[i : i + limit])
+            for i in range(0, len(words), limit)
+        ]
+
+    def fake_call_llm(messages, model, **kwargs):
+        system_prompt = messages[0]["content"]
+        text = messages[-1]["content"].split("\n", 1)[-1].strip()
+        cjk_match = re.search(r"每段≤\s*(\d+)\s*字", system_prompt)
+        english_match = re.search(r"每段≤\s*(\d+)\s*词", system_prompt)
+        cjk_limit = int(cjk_match.group(1)) if cjk_match else 18
+        english_limit = int(english_match.group(1)) if english_match else 12
+
+        if re.search(r"[。.!?！？]", text):
+            parts = re.findall(r"[^。.!?！？]+[。.!?！？]?", text)
+            normalized_parts = []
+            for part in parts:
+                stripped = part.strip()
+                if not stripped:
+                    continue
+                if re.search(r"[\u4e00-\u9fff]", stripped):
+                    normalized_parts.extend(split_cjk_part(stripped, cjk_limit))
+                else:
+                    normalized_parts.extend(split_space_part(stripped, english_limit))
+            content = "<br>".join(normalized_parts)
+        else:
+            content = text
+
+        return _make_response(content)
+
+    monkeypatch.setattr(
+        "videocaptioner.core.split.split_by_llm.call_llm",
+        fake_call_llm,
+    )
+    return fake_call_llm
 
 
 @pytest.mark.integration
@@ -155,3 +213,106 @@ class TestSplitByLLM:
             assert (
                 word_count <= max_limit * 1.2
             ), f"分段长度应该符合限制: {word_count} > {max_limit}"
+
+    def test_space_differences_do_not_trigger_content_error(self, monkeypatch):
+        """空格差异不应被视为内容改写。"""
+        call_count = 0
+
+        def fake_call_llm(messages, model, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return _make_response("hello   world<br>this  is   a test")
+
+        monkeypatch.setattr(
+            "videocaptioner.core.split.split_by_llm.call_llm",
+            fake_call_llm,
+        )
+
+        result = split_by_llm("hello world this is a test", model="gpt-4o-mini")
+
+        assert call_count == 1
+        assert result == ["hello world", "this is a test"]
+
+    def test_empty_segments_are_cleaned(self, monkeypatch):
+        """连续 <br> 产生的空段应被清洗。"""
+
+        def fake_call_llm(messages, model, **kwargs):
+            return _make_response("你好<br><br>世界")
+
+        monkeypatch.setattr(
+            "videocaptioner.core.split.split_by_llm.call_llm",
+            fake_call_llm,
+        )
+
+        result = split_by_llm("你好世界", model="gpt-4o-mini")
+
+        assert result == ["你好世界"]
+
+    def test_local_repair_avoids_second_llm_call(self, monkeypatch):
+        """轻微超长段应由本地修复处理，不触发第二次 LLM 调用。"""
+        call_count = 0
+        text = (
+            "one two three four five six seven eight nine ten eleven twelve thirteen"
+        )
+
+        def fake_call_llm(messages, model, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return _make_response(text)
+
+        monkeypatch.setattr(
+            "videocaptioner.core.split.split_by_llm.call_llm",
+            fake_call_llm,
+        )
+
+        result = split_by_llm(
+            text,
+            model="gpt-4o-mini",
+            max_word_count_english=12,
+        )
+
+        assert call_count == 1
+        assert len(result) == 2
+        assert all(count_words(segment) <= 12 for segment in result)
+
+    def test_modified_content_falls_back_to_original(self, monkeypatch):
+        """两轮都改写内容时应回退原文。"""
+        responses = iter(["hello brave world", "hello edited world"])
+
+        def fake_call_llm(messages, model, **kwargs):
+            return _make_response(next(responses))
+
+        monkeypatch.setattr(
+            "videocaptioner.core.split.split_by_llm.call_llm",
+            fake_call_llm,
+        )
+
+        result = split_by_llm("hello world", model="gpt-4o-mini")
+
+        assert result == ["hello world"]
+
+    def test_falls_back_to_last_content_preserving_result(self, monkeypatch):
+        """最终失败时优先返回最后一个内容保真的结果。"""
+        call_count = 0
+        text = "这是一个非常非常非常长并且没有标点的字幕片段需要继续保持原样"
+
+        def fake_call_llm(messages, model, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _make_response(text)
+            return _make_response("这是被修改后的文本")
+
+        monkeypatch.setattr(
+            "videocaptioner.core.split.split_by_llm.call_llm",
+            fake_call_llm,
+        )
+
+        result = split_by_llm(
+            text,
+            model="gpt-4o-mini",
+            max_word_count_cjk=10,
+        )
+
+        assert call_count == 2
+        assert result == [text]

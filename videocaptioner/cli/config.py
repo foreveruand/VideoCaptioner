@@ -81,6 +81,8 @@ DEFAULTS: Dict[str, Any] = {
         "split": True,
         "max_word_count_cjk": 18,
         "max_word_count_english": 12,
+        "llm_chunk_target_multiplier": 8,
+        "llm_split_soft_limit_ratio": 1.1,
         "thread_num": 4,
         "batch_size": 20,
     },

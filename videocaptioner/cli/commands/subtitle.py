@@ -98,6 +98,10 @@ def run(args: Namespace, config: dict) -> int:
     batch_size = get(config, "subtitle.batch_size", 20)
     max_cjk = get(config, "subtitle.max_word_count_cjk", 18)
     max_english = get(config, "subtitle.max_word_count_english", 12)
+    llm_chunk_multiplier = get(config, "subtitle.llm_chunk_target_multiplier", 8)
+    llm_split_soft_limit_ratio = get(
+        config, "subtitle.llm_split_soft_limit_ratio", 1.1
+    )
 
     # Validate numeric ranges
     if thread_num < 1:
@@ -108,6 +112,12 @@ def run(args: Namespace, config: dict) -> int:
         return EXIT.USAGE_ERROR
     if max_cjk < 1 or max_english < 1:
         output.error("--max-cjk and --max-english must be at least 1")
+        return EXIT.USAGE_ERROR
+    if llm_chunk_multiplier < 1:
+        output.error("--llm-chunk-multiplier must be at least 1")
+        return EXIT.USAGE_ERROR
+    if llm_split_soft_limit_ratio < 1.0:
+        output.error("--llm-split-soft-limit-ratio must be at least 1.0")
         return EXIT.USAGE_ERROR
     out_fmt = get(config, "output.format", "srt")
     layout_str = get(config, "synthesize.layout", "target-above")
@@ -197,6 +207,8 @@ def run(args: Namespace, config: dict) -> int:
                 model=llm_model,
                 max_word_count_cjk=max_cjk,
                 max_word_count_english=max_english,
+                llm_chunk_target_multiplier=llm_chunk_multiplier,
+                llm_split_soft_limit_ratio=llm_split_soft_limit_ratio,
                 llm_extra_params=llm_extra_params,
             )
             asr_data = splitter.split_subtitle(asr_data)

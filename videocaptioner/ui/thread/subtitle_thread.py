@@ -139,6 +139,8 @@ class SubtitleThread(QThread):
                     model=subtitle_config.llm_model,
                     max_word_count_cjk=subtitle_config.max_word_count_cjk,
                     max_word_count_english=subtitle_config.max_word_count_english,
+                    llm_chunk_target_multiplier=subtitle_config.llm_chunk_target_multiplier,
+                    llm_split_soft_limit_ratio=subtitle_config.llm_split_soft_limit_ratio,
                     use_llm=subtitle_config.need_split,
                     llm_extra_params=subtitle_config.llm_extra_params,
                 )
