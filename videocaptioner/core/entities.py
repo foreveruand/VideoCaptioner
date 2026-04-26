@@ -643,6 +643,8 @@ class SubtitleConfig:
     subtitle_layout: SubtitleLayoutEnum = SubtitleLayoutEnum.ORIGINAL_ON_TOP
     max_word_count_cjk: int = 12
     max_word_count_english: int = 18
+    llm_chunk_target_multiplier: int = 8
+    llm_split_soft_limit_ratio: float = 1.1
     need_split: bool = True
     target_language: Optional["TargetLanguage"] = None
     subtitle_style: Optional[str] = None
@@ -662,6 +664,12 @@ class SubtitleConfig:
             lines.append("Split: Yes")
             lines.append(f"  Max Words (CJK): {self.max_word_count_cjk}")
             lines.append(f"  Max Words (English): {self.max_word_count_english}")
+            lines.append(
+                f"  LLM Chunk Multiplier: {self.llm_chunk_target_multiplier}"
+            )
+            lines.append(
+                f"  Split Soft Limit Ratio: {self.llm_split_soft_limit_ratio}"
+            )
 
         if self.need_optimize:
             lines.append("Optimize: Yes")

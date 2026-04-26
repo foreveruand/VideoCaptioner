@@ -210,6 +210,8 @@ class TaskFactory:
             # 字幕分割
             max_word_count_cjk=cfg.max_word_count_cjk.value,
             max_word_count_english=cfg.max_word_count_english.value,
+            llm_chunk_target_multiplier=cfg.llm_chunk_target_multiplier.value,
+            llm_split_soft_limit_ratio=cfg.llm_split_soft_limit_ratio.value,
             need_split=cfg.need_split.value,
             # 字幕翻译
             target_language=cfg.target_language.value,

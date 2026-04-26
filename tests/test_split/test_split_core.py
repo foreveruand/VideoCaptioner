@@ -109,11 +109,15 @@ class TestSubtitleSplitterInit:
             model="gpt-4",
             max_word_count_cjk=30,
             max_word_count_english=20,
+            llm_chunk_target_multiplier=6,
+            llm_split_soft_limit_ratio=1.2,
         )
         assert splitter.thread_num == 10
         assert splitter.model == "gpt-4"
         assert splitter.max_word_count_cjk == 30
         assert splitter.max_word_count_english == 20
+        assert splitter.llm_chunk_target_multiplier == 6
+        assert splitter.llm_split_soft_limit_ratio == 1.2
 
     def test_thread_pool_created(self):
         """测试线程池正确创建"""
@@ -173,9 +177,46 @@ class TestSubtitleSplitterInit:
 
         assert result[0].text == "rules"
 
+    def test_process_by_llm_passes_new_split_params(self, monkeypatch):
+        """LLM 分块倍率和软超限比例应透传到 split_by_llm。"""
+        splitter = SubtitleSplitter(
+            thread_num=1,
+            model="gpt-4o-mini",
+            llm_chunk_target_multiplier=5,
+            llm_split_soft_limit_ratio=1.25,
+        )
+        captured = {}
+
+        def fake_split_by_llm(**kwargs):
+            captured.update(kwargs)
+            return ["你好"]
+
+        monkeypatch.setattr(
+            "videocaptioner.core.split.split.split_by_llm",
+            fake_split_by_llm,
+        )
+        monkeypatch.setattr(
+            splitter,
+            "_merge_segments_based_on_sentences",
+            lambda segments, sentences: [ASRDataSeg(text="merged", start_time=0, end_time=100)],
+        )
+
+        splitter._process_by_llm([ASRDataSeg(text="你", start_time=0, end_time=50)])
+
+        assert captured["llm_extra_params"]["subtitle.llm_split_soft_limit_ratio"] == 1.25
+
 
 class TestDetermineNumSegments:
     """测试 _determine_num_segments 方法"""
+
+    def test_chunk_target_uses_language_limit_multiplier(self):
+        """默认分块目标应基于语言限制和倍率。"""
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+        threshold = splitter._get_chunk_target_word_count("hello world")
+        assert threshold == MAX_WORD_COUNT_ENGLISH * splitter.llm_chunk_target_multiplier
+
+        num_segments = splitter._determine_num_segments(145, threshold=threshold)
+        assert num_segments == 2
 
     def test_small_word_count(self):
         """测试小字数（不需要分段）"""
@@ -277,6 +318,70 @@ class TestGroupByTimeGaps:
         groups = splitter._group_by_time_gaps(segments, check_large_gaps=True)
         # 应该检测到异常间隔并分组
         assert len(groups) >= 1
+
+
+class TestSplitAsrData:
+    """测试基于累计字数的 LLM 分块。"""
+
+    def test_split_prefers_cumulative_word_target(self):
+        """切点应靠近累计字数目标，而不是 segment 下标近似。"""
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+        segments = [
+            ASRDataSeg(text="one two three four five six", start_time=0, end_time=100),
+            ASRDataSeg(
+                text="seven eight nine ten eleven twelve",
+                start_time=100,
+                end_time=200,
+            ),
+            ASRDataSeg(text="thirteen", start_time=200, end_time=300),
+        ]
+        result = splitter._split_asr_data(ASRData(segments), num_segments=2)
+
+        assert len(result) == 2
+        assert result[0].to_txt().strip() == "one two three four five six"
+
+    def test_split_prefers_large_gap_near_target(self):
+        """目标附近存在大时间间隔时应优先选择该切点。"""
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+        segments = [
+            ASRDataSeg(text="一二三四", start_time=0, end_time=100),
+            ASRDataSeg(text="五六七八", start_time=100, end_time=200),
+            ASRDataSeg(text="九十十一", start_time=200, end_time=300),
+            ASRDataSeg(text="十二十三", start_time=1000, end_time=1100),
+            ASRDataSeg(text="十四十五", start_time=1100, end_time=1200),
+        ]
+
+        result = splitter._split_asr_data(ASRData(segments), num_segments=2)
+
+        assert len(result) == 2
+        assert result[0].segments[-1].text == "九十十一"
+        assert result[1].segments[0].text == "十二十三"
+
+    def test_merge_short_llm_chunks(self):
+        """相邻明显偏短的块应在发送给 LLM 前合并。"""
+        splitter = SubtitleSplitter(thread_num=1, model="gpt-4o-mini")
+        chunks = [
+            ASRData([ASRDataSeg(text="hi", start_time=0, end_time=100)]),
+            ASRData([ASRDataSeg(text="all", start_time=100, end_time=200)]),
+            ASRData(
+                [
+                    ASRDataSeg(
+                        text="this is a longer subtitle chunk",
+                        start_time=200,
+                        end_time=400,
+                    )
+                ]
+            ),
+        ]
+
+        merged = splitter._merge_short_llm_chunks(
+            chunks,
+            total_word_count=12,
+            num_segments=3,
+        )
+
+        assert len(merged) == 2
+        assert merged[0].to_txt().replace("\n", "").strip() == "hiall"
 
 
 class TestSplitByCommonWords:

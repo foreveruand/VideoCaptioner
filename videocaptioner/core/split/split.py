@@ -1,5 +1,6 @@
 import atexit
 import difflib
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, List, Union
 
@@ -22,8 +23,8 @@ logger = setup_logger("subtitle_splitter")
 MAX_WORD_COUNT_CJK = 25  # CJK文本单行最大字数
 MAX_WORD_COUNT_ENGLISH = 18  # 英文文本单行最大单词数
 
-# Segments阈值
-SEGMENT_WORD_THRESHOLD = 500  # 长文本Segments阈值(字数)
+# LLM 分块配置
+LLM_CHUNK_TARGET_MULTIPLIER = 8  # 单次 LLM 请求目标块长度倍数
 
 # 时间间隔
 MAX_GAP = 1500  # 允许的最大时间间隔(毫秒)
@@ -95,6 +96,8 @@ class SubtitleSplitter:
         model,
         max_word_count_cjk: int = MAX_WORD_COUNT_CJK,
         max_word_count_english: int = MAX_WORD_COUNT_ENGLISH,
+        llm_chunk_target_multiplier: int = LLM_CHUNK_TARGET_MULTIPLIER,
+        llm_split_soft_limit_ratio: float = 1.1,
         use_llm: bool = True,
         llm_extra_params: Any = None,
     ):
@@ -105,6 +108,8 @@ class SubtitleSplitter:
             model: LLM模型名称
             max_word_count_cjk: CJK最大字数
             max_word_count_english: 英文最大单词数
+            llm_chunk_target_multiplier: 单次 LLM 请求目标块长度倍数
+            llm_split_soft_limit_ratio: LLM 结果轻微超限的本地修复阈值
             use_llm: 是否优先使用LLM智能断句
             llm_extra_params: 额外LLM请求参数
         """
@@ -112,6 +117,8 @@ class SubtitleSplitter:
         self.model = model
         self.max_word_count_cjk = max_word_count_cjk
         self.max_word_count_english = max_word_count_english
+        self.llm_chunk_target_multiplier = max(1, llm_chunk_target_multiplier)
+        self.llm_split_soft_limit_ratio = max(1.0, llm_split_soft_limit_ratio)
         self.use_llm = use_llm
         self.llm_extra_params = parse_llm_extra_params(llm_extra_params)
         self.is_running = True
@@ -156,7 +163,10 @@ class SubtitleSplitter:
 
             # 3. 确定Segments数并分割
             total_word_count = count_words(txt)
-            num_segments = self._determine_num_segments(total_word_count)
+            chunk_target = self._get_chunk_target_word_count(txt)
+            num_segments = self._determine_num_segments(
+                total_word_count, threshold=chunk_target
+            )
             logger.debug(f"Based on word count {total_word_count},determined segment count: {num_segments}")
 
             asr_data_list = self._split_asr_data(asr_data, num_segments)
@@ -173,8 +183,17 @@ class SubtitleSplitter:
             logger.error(f"Split failed:{str(e)}")
             raise RuntimeError(f"Split failed:{str(e)}")
 
+    def _get_chunk_target_word_count(self, text: str) -> int:
+        """根据文本语言特征计算单次 LLM 请求的目标字数。"""
+        base_limit = (
+            self.max_word_count_cjk
+            if is_mainly_cjk(text)
+            else self.max_word_count_english
+        )
+        return max(1, base_limit * self.llm_chunk_target_multiplier)
+
     def _determine_num_segments(
-        self, word_count: int, threshold: int = SEGMENT_WORD_THRESHOLD
+        self, word_count: int, threshold: int | None = None
     ) -> int:
         """Based on word count确定Segments数
 
@@ -185,6 +204,8 @@ class SubtitleSplitter:
         Returns:
             Segments数(最小为1)
         """
+        if threshold is None:
+            threshold = self._get_chunk_target_word_count("")
         num_segments = word_count // threshold
         if word_count % threshold > 0:
             num_segments += 1
@@ -207,36 +228,40 @@ class SubtitleSplitter:
         """
         total_segs = len(asr_data.segments)
         total_word_count = count_words(asr_data.to_txt())
-        words_per_segment = total_word_count // num_segments
 
         if num_segments <= 1 or total_segs <= num_segments:
             return [asr_data]
 
-        # 计算初始分割点
-        split_indices = [i * words_per_segment for i in range(1, num_segments)]
+        prefix_word_counts = []
+        cumulative_words = 0
+        for seg in asr_data.segments:
+            cumulative_words += count_words(seg.text)
+            prefix_word_counts.append(cumulative_words)
 
-        # 调整分割点:在附近寻找最大时间间隔
         adjusted_split_indices = []
-        for split_point in split_indices:
-            start = max(0, split_point - SPLIT_SEARCH_RANGE)
-            end = min(total_segs - 1, split_point + SPLIT_SEARCH_RANGE)
-
-            # 寻找最大间隔点
-            max_gap = -1
-            best_index = split_point
-
-            for j in range(start, end):
-                gap = (
-                    asr_data.segments[j + 1].start_time - asr_data.segments[j].end_time
-                )
-                if gap > max_gap:
-                    max_gap = gap
-                    best_index = j
-
+        for i in range(1, num_segments):
+            target_word_pos = (total_word_count * i) / num_segments
+            split_point = next(
+                (
+                    idx
+                    for idx, prefix_count in enumerate(prefix_word_counts[:-1])
+                    if prefix_count >= target_word_pos
+                ),
+                total_segs - 2,
+            )
+            best_index = self._find_best_split_index(
+                asr_data.segments,
+                prefix_word_counts,
+                split_point,
+                target_word_pos,
+            )
             adjusted_split_indices.append(best_index)
 
-        # 去重并排序
-        adjusted_split_indices = sorted(list(set(adjusted_split_indices)))
+        adjusted_split_indices = sorted(
+            index
+            for index in set(adjusted_split_indices)
+            if 0 <= index < total_segs - 1
+        )
 
         # 执行分割
         segments = []
@@ -250,7 +275,66 @@ class SubtitleSplitter:
             part = ASRData(asr_data.segments[prev_index:])
             segments.append(part)
 
-        return segments
+        return self._merge_short_llm_chunks(segments, total_word_count, num_segments)
+
+    def _find_best_split_index(
+        self,
+        segments: List[ASRDataSeg],
+        prefix_word_counts: List[int],
+        split_point: int,
+        target_word_pos: float,
+    ) -> int:
+        """在目标位置附近寻找最佳切点。"""
+        left_punctuation_pattern = r"[,.!?;:，。！？；：]$"
+        right_punctuation_pattern = r"^[,.!?;:，。！？；：]"
+        start = max(0, split_point - SPLIT_SEARCH_RANGE)
+        end = min(len(segments) - 2, split_point + SPLIT_SEARCH_RANGE)
+        best_index = split_point
+        best_score = (-1, -1, float("-inf"))
+
+        for index in range(start, end + 1):
+            gap = segments[index + 1].start_time - segments[index].end_time
+            punct_score = int(
+                bool(
+                    re.search(left_punctuation_pattern, segments[index].text.strip())
+                    or re.match(
+                        right_punctuation_pattern, segments[index + 1].text.strip()
+                    )
+                )
+            )
+            distance_score = -abs(prefix_word_counts[index] - target_word_pos)
+            score = (gap, punct_score, distance_score)
+            if score > best_score:
+                best_score = score
+                best_index = index
+
+        return best_index
+
+    def _merge_short_llm_chunks(
+        self, chunks: List[ASRData], total_word_count: int, num_segments: int
+    ) -> List[ASRData]:
+        """合并明显过短的相邻块，避免无意义的小请求。"""
+        if len(chunks) < 2 or num_segments <= 0:
+            return chunks
+
+        target_word_count = max(1, total_word_count // num_segments)
+        min_chunk_word_count = max(1, target_word_count // 2)
+        merged_chunks: List[ASRData] = []
+
+        for chunk in chunks:
+            chunk_word_count = count_words(chunk.to_txt())
+            if (
+                merged_chunks
+                and chunk_word_count < min_chunk_word_count
+                and count_words(merged_chunks[-1].to_txt()) < min_chunk_word_count
+            ):
+                merged_chunks[-1] = ASRData(
+                    merged_chunks[-1].segments + chunk.segments
+                )
+            else:
+                merged_chunks.append(chunk)
+
+        return merged_chunks
 
     def _process_segments(self, asr_data_list: List[ASRData]) -> List[List[ASRDataSeg]]:
         """并发处理AllSegments"""
@@ -302,7 +386,10 @@ class SubtitleSplitter:
             model=self.model,
             max_word_count_cjk=self.max_word_count_cjk,
             max_word_count_english=self.max_word_count_english,
-            llm_extra_params=self.llm_extra_params,
+            llm_extra_params={
+                **self.llm_extra_params,
+                "subtitle.llm_split_soft_limit_ratio": self.llm_split_soft_limit_ratio,
+            },
         )
 
         return self._merge_segments_based_on_sentences(segments, sentences)
