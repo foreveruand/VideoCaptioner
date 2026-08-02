@@ -153,6 +153,7 @@ class SubtitleThread(QThread):
                         if subtitle_config.need_split
                         else subtitle_config.llm_extra_params
                     ),
+                    structured_output_mode=subtitle_config.split_structured_output_mode,
                 )
                 asr_data = splitter.split_subtitle(asr_data)
                 self.update_all.emit(asr_data.to_json())

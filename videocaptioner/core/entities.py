@@ -661,6 +661,7 @@ class SubtitleConfig:
     split_llm_model: Optional[str] = None
     split_llm_extra_params: Optional[str] = None
     split_llm_preset_name: Optional[str] = None
+    split_structured_output_mode: str = "off"
     need_split: bool = True
     target_language: Optional["TargetLanguage"] = None
     subtitle_style: Optional[str] = None

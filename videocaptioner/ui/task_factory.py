@@ -231,6 +231,11 @@ class TaskFactory:
             split_llm_model=(str(split_preset.get("model", "")) if split_preset else llm_model),
             split_llm_extra_params=(str(split_preset.get("llm_extra_params", "")) if split_preset else llm_extra_params),
             split_llm_preset_name=(str(split_preset.get("name", "")) if split_preset else ""),
+            split_structured_output_mode=(
+                str(split_preset.get("structured_output_mode", "off"))
+                if split_preset
+                else structured_output_mode
+            ),
             need_split=cfg.need_split.value,
             # 字幕翻译
             target_language=cfg.target_language.value,

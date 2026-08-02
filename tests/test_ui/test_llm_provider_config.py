@@ -111,7 +111,8 @@ def test_task_factory_uses_dedicated_split_llm_preset():
             cfg.llm_provider_presets,
             '[{"name":"split-deep","provider":"DeepSeek","api_base":"https://split.example/v1",'
             '"api_key":"split-key","model":"split-model",'
-            '"llm_extra_params":"{\\"reasoning\\":{\\"effort\\":\\"high\\"}}"}]',
+            '"llm_extra_params":"{\\"reasoning\\":{\\"effort\\":\\"high\\"}}",'
+            '"structured_output_mode":"json_schema"}]',
         )
         cfg.set(cfg.split_llm_preset_name, "split-deep")
 
@@ -123,5 +124,6 @@ def test_task_factory_uses_dedicated_split_llm_preset():
         assert config.split_base_url == "https://split.example/v1"
         assert config.split_api_key == "split-key"
         assert config.split_llm_extra_params == '{"reasoning":{"effort":"high"}}'
+        assert config.split_structured_output_mode == "json_schema"
     finally:
         _restore(snapshot)

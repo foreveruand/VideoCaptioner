@@ -100,6 +100,7 @@ class SubtitleSplitter:
         llm_split_soft_limit_ratio: float = 1.1,
         use_llm: bool = True,
         llm_extra_params: Any = None,
+        structured_output_mode: str = "off",
     ):
         """初始化分割器
 
@@ -112,6 +113,7 @@ class SubtitleSplitter:
             llm_split_soft_limit_ratio: LLM 结果轻微超限的本地修复阈值
             use_llm: 是否优先使用LLM智能断句
             llm_extra_params: 额外LLM请求参数
+            structured_output_mode: 分段 LLM 的结构化输出模式
         """
         self.thread_num = thread_num
         self.model = model
@@ -125,6 +127,7 @@ class SubtitleSplitter:
         self.llm_split_soft_limit_ratio = llm_split_soft_limit_ratio
         self.use_llm = use_llm
         self.llm_extra_params = parse_llm_extra_params(llm_extra_params)
+        self.structured_output_mode = structured_output_mode
         self.is_running = True
         self._init_thread_pool()
 
@@ -394,6 +397,7 @@ class SubtitleSplitter:
             max_word_count_english=self.max_word_count_english,
             llm_extra_params=self.llm_extra_params,
             soft_limit_ratio=self.llm_split_soft_limit_ratio,
+            structured_output_mode=self.structured_output_mode,
         )
 
         return self._merge_segments_based_on_sentences(segments, sentences)

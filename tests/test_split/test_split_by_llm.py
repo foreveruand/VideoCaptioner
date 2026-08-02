@@ -276,12 +276,12 @@ class TestSplitByLLM:
         assert len(result) == 2
         assert all(count_words(segment) <= 12 for segment in result)
 
-    def test_custom_response_format_is_not_sent_to_splitter(self, monkeypatch):
+    def test_custom_response_format_uses_json_segments(self, monkeypatch):
         captured = {}
 
         def fake_call_llm(messages, model, **kwargs):
             captured.update(kwargs)
-            return _make_response("hello<br>world")
+            return _make_response('{"segments": ["hello", "world"]}')
 
         monkeypatch.setattr(
             "videocaptioner.core.split.split_by_llm.call_llm",
@@ -296,8 +296,48 @@ class TestSplitByLLM:
                 "reasoning": {"effort": "high"},
             },
         ) == ["hello world"]
-        assert "response_format" not in captured
+        assert captured["response_format"] == {"type": "json_object"}
         assert captured["extra_body"] == {"reasoning": {"effort": "high"}}
+
+    def test_json_schema_prompt_and_response_are_structured(self, monkeypatch):
+        captured = {}
+
+        def fake_call_llm(messages, model, **kwargs):
+            captured["messages"] = messages
+            captured.update(kwargs)
+            return _make_response('{"segments": ["你好", "世界"]}')
+
+        monkeypatch.setattr(
+            "videocaptioner.core.split.split_by_llm.call_llm",
+            fake_call_llm,
+        )
+
+        result = split_by_llm(
+            "你好世界",
+            model="gpt-4o-mini",
+            structured_output_mode="json_schema",
+        )
+        assert result == ["你好世界"]
+        assert captured["response_format"]["type"] == "json_schema"
+        assert "<br>" not in captured["messages"][0]["content"]
+        assert "<br>" not in captured["messages"][1]["content"]
+
+    def test_unstructured_prompt_requires_br_separators(self, monkeypatch):
+        captured = {}
+
+        def fake_call_llm(messages, model, **kwargs):
+            captured["messages"] = messages
+            return _make_response("你好<br>世界")
+
+        monkeypatch.setattr(
+            "videocaptioner.core.split.split_by_llm.call_llm",
+            fake_call_llm,
+        )
+
+        split_by_llm("你好世界", model="gpt-4o-mini")
+
+        assert "<br>" in captured["messages"][0]["content"]
+        assert "<br>" in captured["messages"][1]["content"]
 
     def test_modified_content_falls_back_to_original(self, monkeypatch):
         """两轮都改写内容时应失败，以便调用方执行规则降级。"""
@@ -314,27 +354,26 @@ class TestSplitByLLM:
         with pytest.raises(RuntimeError, match="did not produce a valid result"):
             split_by_llm("hello world", model="gpt-4o-mini")
 
-    def test_invalid_overlong_result_fails_after_bounded_attempts(self, monkeypatch):
-        """内容保真但严重超限时不接受结果，最多请求两次。"""
+    def test_overlong_segments_fall_back_without_discarding_valid_segments(self, monkeypatch):
+        """仅超长段走本地规则拆分，其余 LLM 分段应保留。"""
         call_count = 0
-        text = "这是一个非常非常非常长并且没有标点的字幕片段需要继续保持原样"
+        overlong = "ところで、さっきから服の胸元を手で隠しているようだが、どうかしたか?"
+        text = f"最初の短い文。{overlong}最後の短い文。"
 
         def fake_call_llm(messages, model, **kwargs):
             nonlocal call_count
             call_count += 1
-            if call_count == 1:
-                return _make_response(text)
-            return _make_response("这是被修改后的文本")
+            return _make_response(f"最初の短い文。<br>{overlong}<br>最後の短い文。")
 
         monkeypatch.setattr(
             "videocaptioner.core.split.split_by_llm.call_llm",
             fake_call_llm,
         )
 
-        with pytest.raises(RuntimeError, match="did not produce a valid result"):
-            split_by_llm(
-                text,
-                model="gpt-4o-mini",
-                max_word_count_cjk=10,
-            )
-        assert call_count == 2
+        result = split_by_llm(text, model="gpt-4o-mini", max_word_count_cjk=30)
+
+        assert call_count == 1
+        assert result[0] == "最初の短い文。"
+        assert result[-1] == "最後の短い文。"
+        assert "".join(result) == text
+        assert all(count_words(segment) <= 30 for segment in result)
