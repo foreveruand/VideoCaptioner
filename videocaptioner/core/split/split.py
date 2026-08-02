@@ -117,8 +117,12 @@ class SubtitleSplitter:
         self.model = model
         self.max_word_count_cjk = max_word_count_cjk
         self.max_word_count_english = max_word_count_english
-        self.llm_chunk_target_multiplier = max(1, llm_chunk_target_multiplier)
-        self.llm_split_soft_limit_ratio = max(1.0, llm_split_soft_limit_ratio)
+        if llm_chunk_target_multiplier < 1:
+            raise ValueError("LLM chunk target multiplier must be at least 1")
+        if llm_split_soft_limit_ratio < 1.0:
+            raise ValueError("LLM split soft limit ratio must be at least 1.0")
+        self.llm_chunk_target_multiplier = llm_chunk_target_multiplier
+        self.llm_split_soft_limit_ratio = llm_split_soft_limit_ratio
         self.use_llm = use_llm
         self.llm_extra_params = parse_llm_extra_params(llm_extra_params)
         self.is_running = True
@@ -290,7 +294,7 @@ class SubtitleSplitter:
         start = max(0, split_point - SPLIT_SEARCH_RANGE)
         end = min(len(segments) - 2, split_point + SPLIT_SEARCH_RANGE)
         best_index = split_point
-        best_score = (-1, -1, float("-inf"))
+        best_score = (float("-inf"), -1, -1)
 
         for index in range(start, end + 1):
             gap = segments[index + 1].start_time - segments[index].end_time
@@ -303,7 +307,9 @@ class SubtitleSplitter:
                 )
             )
             distance_score = -abs(prefix_word_counts[index] - target_word_pos)
-            score = (gap, punct_score, distance_score)
+            # Keep request chunks close to the configured target; use natural
+            # boundaries only to choose between similarly sized candidates.
+            score = (distance_score, punct_score, gap)
             if score > best_score:
                 best_score = score
                 best_index = index
@@ -386,10 +392,8 @@ class SubtitleSplitter:
             model=self.model,
             max_word_count_cjk=self.max_word_count_cjk,
             max_word_count_english=self.max_word_count_english,
-            llm_extra_params={
-                **self.llm_extra_params,
-                "subtitle.llm_split_soft_limit_ratio": self.llm_split_soft_limit_ratio,
-            },
+            llm_extra_params=self.llm_extra_params,
+            soft_limit_ratio=self.llm_split_soft_limit_ratio,
         )
 
         return self._merge_segments_based_on_sentences(segments, sentences)

@@ -94,6 +94,9 @@ class Config(QConfig):
     openai_use_structured_outputs = ConfigItem(
         "LLM", "OpenAI_UseStructuredOutputs", False, BoolValidator()
     )
+    openai_structured_output_mode = OptionsConfigItem(
+        "LLM", "OpenAI_StructuredOutputMode", "off", OptionsValidator(["off", "json_object", "json_schema"])
+    )
 
     silicon_cloud_model = ConfigItem("LLM", "SiliconCloud_Model", "gpt-4o-mini")
     silicon_cloud_api_key = ConfigItem("LLM", "SiliconCloud_API_Key", "")
@@ -103,6 +106,9 @@ class Config(QConfig):
     silicon_cloud_extra_params = ConfigItem("LLM", "SiliconCloud_ExtraParams", "")
     silicon_cloud_use_structured_outputs = ConfigItem(
         "LLM", "SiliconCloud_UseStructuredOutputs", False, BoolValidator()
+    )
+    silicon_cloud_structured_output_mode = OptionsConfigItem(
+        "LLM", "SiliconCloud_StructuredOutputMode", "off", OptionsValidator(["off", "json_object", "json_schema"])
     )
 
     deepseek_model = ConfigItem("LLM", "DeepSeek_Model", "deepseek-chat")
@@ -114,6 +120,9 @@ class Config(QConfig):
     deepseek_use_structured_outputs = ConfigItem(
         "LLM", "DeepSeek_UseStructuredOutputs", False, BoolValidator()
     )
+    deepseek_structured_output_mode = OptionsConfigItem(
+        "LLM", "DeepSeek_StructuredOutputMode", "off", OptionsValidator(["off", "json_object", "json_schema"])
+    )
 
     ollama_model = ConfigItem("LLM", "Ollama_Model", "llama2")
     ollama_api_key = ConfigItem("LLM", "Ollama_API_Key", "ollama")
@@ -121,6 +130,9 @@ class Config(QConfig):
     ollama_extra_params = ConfigItem("LLM", "Ollama_ExtraParams", "")
     ollama_use_structured_outputs = ConfigItem(
         "LLM", "Ollama_UseStructuredOutputs", False, BoolValidator()
+    )
+    ollama_structured_output_mode = OptionsConfigItem(
+        "LLM", "Ollama_StructuredOutputMode", "off", OptionsValidator(["off", "json_object", "json_schema"])
     )
 
     lm_studio_model = ConfigItem("LLM", "LmStudio_Model", "qwen2.5:7b")
@@ -131,6 +143,9 @@ class Config(QConfig):
     lm_studio_extra_params = ConfigItem("LLM", "LmStudio_ExtraParams", "")
     lm_studio_use_structured_outputs = ConfigItem(
         "LLM", "LmStudio_UseStructuredOutputs", False, BoolValidator()
+    )
+    lm_studio_structured_output_mode = OptionsConfigItem(
+        "LLM", "LmStudio_StructuredOutputMode", "off", OptionsValidator(["off", "json_object", "json_schema"])
     )
 
     gemini_model = ConfigItem("LLM", "Gemini_Model", "gemini-pro")
@@ -144,6 +159,9 @@ class Config(QConfig):
     gemini_use_structured_outputs = ConfigItem(
         "LLM", "Gemini_UseStructuredOutputs", False, BoolValidator()
     )
+    gemini_structured_output_mode = OptionsConfigItem(
+        "LLM", "Gemini_StructuredOutputMode", "off", OptionsValidator(["off", "json_object", "json_schema"])
+    )
 
     chatglm_model = ConfigItem("LLM", "ChatGLM_Model", "glm-4")
     chatglm_api_key = ConfigItem("LLM", "ChatGLM_API_Key", "")
@@ -153,6 +171,9 @@ class Config(QConfig):
     chatglm_extra_params = ConfigItem("LLM", "ChatGLM_ExtraParams", "")
     chatglm_use_structured_outputs = ConfigItem(
         "LLM", "ChatGLM_UseStructuredOutputs", False, BoolValidator()
+    )
+    chatglm_structured_output_mode = OptionsConfigItem(
+        "LLM", "ChatGLM_StructuredOutputMode", "off", OptionsValidator(["off", "json_object", "json_schema"])
     )
     llm_provider_presets = ConfigItem("LLM", "ProviderPresets", "[]")
     llm_active_preset_name = ConfigItem("LLM", "ActivePresetName", "")
@@ -281,6 +302,7 @@ class Config(QConfig):
     llm_split_soft_limit_ratio = ConfigItem(
         "Subtitle", "LLMSplitSoftLimitRatio", 1.1, RangeValidator(1.0, 2.0)
     )
+    split_llm_preset_name = ConfigItem("Subtitle", "SplitLLMPresetName", "")
     custom_prompt_text = ConfigItem("Subtitle", "CustomPromptText", "")
 
     # ------------------- 字幕合成配置 -------------------
@@ -382,31 +404,31 @@ LLM_PROVIDER_PARAM_ITEMS: Dict[
 ] = {
     LLMServiceEnum.OPENAI: (
         cfg.openai_extra_params,
-        cfg.openai_use_structured_outputs,
+        cfg.openai_structured_output_mode,
     ),
     LLMServiceEnum.SILICON_CLOUD: (
         cfg.silicon_cloud_extra_params,
-        cfg.silicon_cloud_use_structured_outputs,
+        cfg.silicon_cloud_structured_output_mode,
     ),
     LLMServiceEnum.DEEPSEEK: (
         cfg.deepseek_extra_params,
-        cfg.deepseek_use_structured_outputs,
+        cfg.deepseek_structured_output_mode,
     ),
     LLMServiceEnum.OLLAMA: (
         cfg.ollama_extra_params,
-        cfg.ollama_use_structured_outputs,
+        cfg.ollama_structured_output_mode,
     ),
     LLMServiceEnum.LM_STUDIO: (
         cfg.lm_studio_extra_params,
-        cfg.lm_studio_use_structured_outputs,
+        cfg.lm_studio_structured_output_mode,
     ),
     LLMServiceEnum.GEMINI: (
         cfg.gemini_extra_params,
-        cfg.gemini_use_structured_outputs,
+        cfg.gemini_structured_output_mode,
     ),
     LLMServiceEnum.CHATGLM: (
         cfg.chatglm_extra_params,
-        cfg.chatglm_use_structured_outputs,
+        cfg.chatglm_structured_output_mode,
     ),
 }
 
@@ -431,24 +453,46 @@ def parse_llm_provider_presets(raw: str) -> list[dict]:
     return result
 
 
+def get_llm_provider_preset(name: str) -> dict | None:
+    """Return a validated provider preset without mutating active settings."""
+    clean_name = name.strip()
+    if not clean_name:
+        return None
+    for preset in parse_llm_provider_presets(cfg.get(cfg.llm_provider_presets)):
+        if str(preset.get("name", "")).strip() == clean_name:
+            return preset
+    return None
+
+
 def migrate_legacy_llm_settings_if_needed() -> None:
     """Migrate old global LLM params to current provider-scoped settings once."""
     legacy_extra = cfg.get(cfg.llm_extra_params).strip()
     legacy_structured = bool(cfg.get(cfg.use_structured_outputs))
-
-    if not legacy_extra and not legacy_structured:
-        return
 
     service = cfg.get(cfg.llm_service)
     extra_item, structured_item = get_provider_param_items(service)
     if legacy_extra and not cfg.get(extra_item).strip():
         cfg.set(extra_item, legacy_extra)
 
-    if legacy_structured and not bool(cfg.get(structured_item)):
-        cfg.set(structured_item, True)
+    if legacy_structured and cfg.get(structured_item) == "off":
+        cfg.set(structured_item, "json_schema")
 
-    cfg.set(cfg.llm_extra_params, "")
-    cfg.set(cfg.use_structured_outputs, False)
+    legacy_mode_items = {
+        LLMServiceEnum.OPENAI: (cfg.openai_use_structured_outputs, cfg.openai_structured_output_mode),
+        LLMServiceEnum.SILICON_CLOUD: (cfg.silicon_cloud_use_structured_outputs, cfg.silicon_cloud_structured_output_mode),
+        LLMServiceEnum.DEEPSEEK: (cfg.deepseek_use_structured_outputs, cfg.deepseek_structured_output_mode),
+        LLMServiceEnum.OLLAMA: (cfg.ollama_use_structured_outputs, cfg.ollama_structured_output_mode),
+        LLMServiceEnum.LM_STUDIO: (cfg.lm_studio_use_structured_outputs, cfg.lm_studio_structured_output_mode),
+        LLMServiceEnum.GEMINI: (cfg.gemini_use_structured_outputs, cfg.gemini_structured_output_mode),
+        LLMServiceEnum.CHATGLM: (cfg.chatglm_use_structured_outputs, cfg.chatglm_structured_output_mode),
+    }
+    for legacy_item, mode_item in legacy_mode_items.values():
+        if cfg.get(legacy_item) and cfg.get(mode_item) == "off":
+            cfg.set(mode_item, "json_schema")
+
+    if legacy_extra or legacy_structured:
+        cfg.set(cfg.llm_extra_params, "")
+        cfg.set(cfg.use_structured_outputs, False)
 
 
 migrate_legacy_llm_settings_if_needed()

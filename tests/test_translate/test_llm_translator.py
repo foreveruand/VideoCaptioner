@@ -182,6 +182,23 @@ class TestLLMTranslator:
 
         assert parsed == {"1": "你好", "2": "世界"}
 
+    def test_json_object_mode_requests_compatible_format(
+        self, target_language: TargetLanguage
+    ) -> None:
+        translator = LLMTranslator(
+            thread_num=1,
+            batch_num=5,
+            target_language=target_language,
+            model="gpt-4o-mini",
+            custom_prompt="",
+            is_reflect=False,
+            structured_output_mode="json_object",
+        )
+
+        assert translator._get_response_format_kwargs({"1": "hello"}) == {
+            "response_format": {"type": "json_object"}
+        }
+
     def test_llm_extra_params_are_stored(
         self,
         target_language: TargetLanguage,

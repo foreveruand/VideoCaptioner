@@ -12,21 +12,19 @@ from videocaptioner.core.entities import (
     SubtitleTask,
     TranslatorServiceEnum,
 )
+from videocaptioner.core.llm.client import reset_llm_client
 from videocaptioner.core.llm.context import (
     clear_task_context,
     generate_task_id,
     set_task_context,
     update_stage,
 )
-from videocaptioner.core.llm.client import reset_llm_client
 from videocaptioner.core.optimize.optimize import SubtitleOptimizer
 from videocaptioner.core.split.split import SubtitleSplitter
 from videocaptioner.core.subtitle.preprocess import preprocess_subtitle_before_llm
 from videocaptioner.core.translate.factory import TranslatorFactory
 from videocaptioner.core.translate.types import TranslatorType
 from videocaptioner.core.utils.logger import setup_logger
-from videocaptioner.core.utils.work_dir_mapping import get_or_create_work_dir_short_name
-from videocaptioner.ui.common.config import cfg
 
 SERVICE_TO_TYPE = {
     TranslatorServiceEnum.OPENAI: TranslatorType.OPENAI,
@@ -60,6 +58,7 @@ def create_translator_from_config(
         custom_prompt=custom_prompt,
         is_reflect=config.need_reflect,
         use_structured_outputs=config.use_structured_outputs,
+        structured_output_mode=config.structured_output_mode,
         llm_extra_params=config.llm_extra_params,
         update_callback=callback,
     )
@@ -83,14 +82,16 @@ class SubtitleThread(QThread):
     def set_custom_prompt_text(self, text: str):
         self.custom_prompt_text = text
 
-    def _setup_llm_config(self) -> SubtitleConfig:
+    def _setup_llm_config(self, base_url: str | None = None, api_key: str | None = None) -> SubtitleConfig:
         """验证 LLM 配置并设置环境变量，返回 SubtitleConfig"""
         config = self.task.subtitle_config
         if not config:
             raise Exception(self.tr("LLM API 未配置, 请检查LLM配置"))
-        if config.base_url and config.api_key and config.llm_model:
-            os.environ["OPENAI_BASE_URL"] = config.base_url
-            os.environ["OPENAI_API_KEY"] = config.api_key
+        base_url = base_url or config.base_url
+        api_key = api_key or config.api_key
+        if base_url and api_key:
+            os.environ["OPENAI_BASE_URL"] = base_url
+            os.environ["OPENAI_API_KEY"] = api_key
             reset_llm_client()
             return config
         else:
@@ -124,8 +125,8 @@ class SubtitleThread(QThread):
                 asr_data.split_to_word_segments()
                 self.update_all.emit(asr_data.to_json())
 
-            # 验证 LLM 配置
-            if self.need_llm(subtitle_config, asr_data):
+            # 优化和翻译使用主 LLM 配置；分割预设在分割阶段单独验证。
+            if subtitle_config.need_optimize or subtitle_config.need_translate:
                 self.progress.emit(2, self.tr("开始验证 LLM 配置..."))
                 subtitle_config = self._setup_llm_config()
 
@@ -134,18 +135,30 @@ class SubtitleThread(QThread):
                 update_stage("split")
                 self.progress.emit(5, self.tr("字幕断句..."))
                 logger.info("正在字幕断句...")
+                if subtitle_config.need_split:
+                    self._setup_llm_config(
+                        subtitle_config.split_base_url,
+                        subtitle_config.split_api_key,
+                    )
                 splitter = SubtitleSplitter(
                     thread_num=subtitle_config.thread_num,
-                    model=subtitle_config.llm_model,
+                    model=subtitle_config.split_llm_model or subtitle_config.llm_model,
                     max_word_count_cjk=subtitle_config.max_word_count_cjk,
                     max_word_count_english=subtitle_config.max_word_count_english,
                     llm_chunk_target_multiplier=subtitle_config.llm_chunk_target_multiplier,
                     llm_split_soft_limit_ratio=subtitle_config.llm_split_soft_limit_ratio,
                     use_llm=subtitle_config.need_split,
-                    llm_extra_params=subtitle_config.llm_extra_params,
+                    llm_extra_params=(
+                        subtitle_config.split_llm_extra_params
+                        if subtitle_config.need_split
+                        else subtitle_config.llm_extra_params
+                    ),
                 )
                 asr_data = splitter.split_subtitle(asr_data)
                 self.update_all.emit(asr_data.to_json())
+
+                if subtitle_config.need_optimize or subtitle_config.need_translate:
+                    self._setup_llm_config()
 
             if subtitle_config.need_optimize or subtitle_config.need_translate:
                 original_count = len(asr_data.segments)
@@ -199,15 +212,11 @@ class SubtitleThread(QThread):
 
                 # 保存翻译结果(单语、双语)
                 if self.task.need_next_task and self.task.video_path:
-                    short_name = get_or_create_work_dir_short_name(
-                        source_path=self.task.video_path,
-                        work_dir=str(cfg.work_dir.value),
-                        prefix="video",
-                    )
+                    source_name = Path(self.task.video_path).stem
                     for layout in SubtitleLayoutEnum:
                         save_path = str(
                             Path(self.task.subtitle_path).parent
-                            / f"{short_name}-{layout.value}.srt"
+                            / f"{source_name}-{layout.value}.srt"
                         )
                         asr_data.save(
                             save_path=save_path,

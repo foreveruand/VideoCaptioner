@@ -26,6 +26,7 @@ class TranslatorFactory:
         custom_prompt: str = "",
         is_reflect: bool = False,
         use_structured_outputs: bool = False,
+        structured_output_mode: str = "off",
         llm_extra_params: object = None,
         update_callback: Optional[Callable] = None,
     ) -> BaseTranslator:
@@ -44,6 +45,7 @@ class TranslatorFactory:
                     custom_prompt=custom_prompt,
                     is_reflect=is_reflect,
                     use_structured_outputs=use_structured_outputs,
+                    structured_output_mode=structured_output_mode,
                     llm_extra_params=llm_extra_params,
                     update_callback=update_callback,
                 )

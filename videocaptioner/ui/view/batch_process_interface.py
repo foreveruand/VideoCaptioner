@@ -37,8 +37,11 @@ from videocaptioner.core.entities import (
     SupportedAudioFormats,
     SupportedSubtitleFormats,
     SupportedVideoFormats,
+    TranscribeLanguageEnum,
+    get_available_transcribe_languages,
 )
 from videocaptioner.core.utils.platform_utils import open_folder
+from videocaptioner.ui.common.config import cfg
 from videocaptioner.ui.thread.batch_process_thread import (
     BatchProcessThread,
     BatchTask,
@@ -94,15 +97,17 @@ class BatchProcessInterface(QWidget):
 
         # 创建任务表格
         self.task_table = TableWidget()
-        self.task_table.setColumnCount(3)
-        self.task_table.setHorizontalHeaderLabels(["文件名", "进度", "状态"])
+        self.task_table.setColumnCount(4)
+        self.task_table.setHorizontalHeaderLabels(["文件名", "源语言", "进度", "状态"])
 
         # 设置表格样式
         self.task_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.task_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
         self.task_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
-        self.task_table.setColumnWidth(1, 250)  # 进度条列宽
-        self.task_table.setColumnWidth(2, 160)  # 状态列宽
+        self.task_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
+        self.task_table.setColumnWidth(1, 160)  # 源语言列宽
+        self.task_table.setColumnWidth(2, 250)  # 进度条列宽
+        self.task_table.setColumnWidth(3, 160)  # 状态列宽
 
         # 设置行高
         self.task_table.verticalHeader().setDefaultSectionSize(40)  # 设置默认行高
@@ -282,6 +287,43 @@ class BatchProcessInterface(QWidget):
             if any(f.lower().endswith(ext) for ext in valid_extensions)
         ]
 
+    def _task_uses_transcription(self, task_type: BatchTaskType) -> bool:
+        return task_type in [
+            BatchTaskType.TRANSCRIBE,
+            BatchTaskType.TRANS_SUB,
+            BatchTaskType.FULL_PROCESS,
+        ]
+
+    def _get_available_source_languages(self) -> list[str]:
+        return [
+            lang.value
+            for lang in get_available_transcribe_languages(cfg.transcribe_model.value)
+        ]
+
+    def _create_language_combo(self) -> ComboBox:
+        combo = ComboBox(self)
+        available_languages = self._get_available_source_languages()
+        combo.addItem(
+            self.tr("使用全局设置 ({})").format(cfg.transcribe_language.value.value)
+        )
+        combo.addItems(available_languages)
+        combo.setMaxVisibleItems(6)
+
+        return combo
+
+    def _get_row_transcribe_language(self, row: int) -> TranscribeLanguageEnum | None:
+        widget = self.task_table.cellWidget(row, 1)
+        if not isinstance(widget, ComboBox):
+            return None
+        if widget.currentIndex() == 0:
+            return None
+
+        selected_text = widget.currentText()
+        for lang in TranscribeLanguageEnum:
+            if lang.value == selected_text:
+                return lang
+        return None
+
     def add_task_to_table(self, file_path):
         row = self.task_table.rowCount()
         self.task_table.insertRow(row)
@@ -291,12 +333,22 @@ class BatchProcessInterface(QWidget):
         file_name.setToolTip(file_path)
         self.task_table.setItem(row, 0, file_name)
 
+        # 源语言
+        task_type = BatchTaskType(self.task_type_combo.currentText())
+        if self._task_uses_transcription(task_type):
+            self.task_table.setCellWidget(row, 1, self._create_language_combo())
+        else:
+            language_item = QTableWidgetItem(self.tr("不适用"))
+            language_item.setTextAlignment(Qt.AlignCenter)  # type: ignore
+            language_item.setForeground(Qt.gray)  # type: ignore
+            self.task_table.setItem(row, 1, language_item)
+
         # 进度条
         progress_bar = ProgressBar()
         progress_bar.setRange(0, 100)
         progress_bar.setValue(0)
         progress_bar.setFixedHeight(18)
-        self.task_table.setCellWidget(row, 1, progress_bar)
+        self.task_table.setCellWidget(row, 2, progress_bar)
 
         # 状态
         status = QTableWidgetItem(str(BatchTaskStatus.WAITING))
@@ -305,7 +357,7 @@ class BatchProcessInterface(QWidget):
         font = QFont()
         font.setBold(True)
         status.setFont(font)
-        self.task_table.setItem(row, 2, status)
+        self.task_table.setItem(row, 3, status)
 
     def show_context_menu(self, pos):
         row = self.task_table.rowAt(pos.y())
@@ -314,7 +366,7 @@ class BatchProcessInterface(QWidget):
 
         menu = RoundMenu(parent=self)
         file_path = self.task_table.item(row, 0).toolTip()
-        status = self.task_table.item(row, 2).text()
+        status = self.task_table.item(row, 3).text()
 
         start_action = Action(FIF.PLAY, "开始")
         start_action.triggered.connect(lambda: self.start_task(file_path))
@@ -352,16 +404,16 @@ class BatchProcessInterface(QWidget):
         for row in range(self.task_table.rowCount()):
             if self.task_table.item(row, 0).toolTip() == file_path:
                 # 更新进度条
-                progress_bar = self.task_table.cellWidget(row, 1)
+                progress_bar = self.task_table.cellWidget(row, 2)
                 progress_bar.setValue(progress)
                 # 更新状态
-                self.task_table.item(row, 2).setText(status)
+                self.task_table.item(row, 3).setText(status)
                 break
 
     def on_task_error(self, file_path: str, error: str):
         for row in range(self.task_table.rowCount()):
             if self.task_table.item(row, 0).toolTip() == file_path:
-                status_item = self.task_table.item(row, 2)
+                status_item = self.task_table.item(row, 3)
                 status_item.setText(str(BatchTaskStatus.FAILED))
                 status_item.setToolTip(error)
                 break
@@ -369,8 +421,8 @@ class BatchProcessInterface(QWidget):
     def on_task_completed(self, file_path: str):
         for row in range(self.task_table.rowCount()):
             if self.task_table.item(row, 0).toolTip() == file_path:
-                self.task_table.item(row, 2).setText(str(BatchTaskStatus.COMPLETED))
-                self.task_table.item(row, 2).setForeground(QColor("#13A10E"))
+                self.task_table.item(row, 3).setText(str(BatchTaskStatus.COMPLETED))
+                self.task_table.item(row, 3).setForeground(QColor("#13A10E"))
                 break
 
     def start_all_tasks(self):
@@ -388,7 +440,7 @@ class BatchProcessInterface(QWidget):
         # 检查是否有等待处理的任务
         waiting_tasks = 0
         for row in range(self.task_table.rowCount()):
-            if self.task_table.item(row, 2).text() == str(BatchTaskStatus.WAITING):
+            if self.task_table.item(row, 3).text() == str(BatchTaskStatus.WAITING):
                 waiting_tasks += 1
 
         if waiting_tasks == 0:
@@ -412,10 +464,14 @@ class BatchProcessInterface(QWidget):
         # 开始处理任务
         for row in range(self.task_table.rowCount()):
             file_path = self.task_table.item(row, 0).toolTip()
-            status = self.task_table.item(row, 2).text()
+            status = self.task_table.item(row, 3).text()
             if status == str(BatchTaskStatus.WAITING):
                 task_type = BatchTaskType(self.task_type_combo.currentText())
-                batch_task = BatchTask(file_path, task_type)
+                batch_task = BatchTask(
+                    file_path,
+                    task_type,
+                    transcribe_language=self._get_row_transcribe_language(row),
+                )
                 self.batch_thread.add_task(batch_task)
 
     def start_task(self, file_path: str):
@@ -431,7 +487,16 @@ class BatchProcessInterface(QWidget):
 
         # 创建并添加单个任务
         task_type = BatchTaskType(self.task_type_combo.currentText())
-        batch_task = BatchTask(file_path, task_type)
+        transcribe_language = None
+        for row in range(self.task_table.rowCount()):
+            if self.task_table.item(row, 0).toolTip() == file_path:
+                transcribe_language = self._get_row_transcribe_language(row)
+                break
+        batch_task = BatchTask(
+            file_path,
+            task_type,
+            transcribe_language=transcribe_language,
+        )
         self.batch_thread.add_task(batch_task)
 
     def cancel_task(self, file_path: str):

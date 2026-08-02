@@ -12,11 +12,12 @@ from videocaptioner.core.entities import (
     SynthesisConfig,
     SynthesisTask,
     TranscribeConfig,
+    TranscribeLanguageEnum,
     TranscribeTask,
     TranscriptAndSubtitleTask,
 )
-from videocaptioner.core.utils.work_dir_mapping import get_or_create_work_dir_short_name
-from videocaptioner.ui.common.config import cfg, get_provider_param_items
+from videocaptioner.core.llm.params import parse_llm_extra_params
+from videocaptioner.ui.common.config import cfg, get_llm_provider_preset, get_provider_param_items
 
 
 class TaskFactory:
@@ -53,26 +54,23 @@ class TaskFactory:
         file_path: str,
         need_next_task: bool = False,
         task_id: Optional[str] = None,
+        transcribe_language: Optional[TranscribeLanguageEnum] = None,
     ) -> TranscribeTask:
         """创建转录任务"""
+        language = transcribe_language or cfg.transcribe_language.value
         # 获取文件名
         file_name = Path(file_path).stem
 
         # 构建输出路径
         if need_next_task:
-            short_name = get_or_create_work_dir_short_name(
-                source_path=file_path,
-                work_dir=str(cfg.work_dir.value),
-                prefix="video",
-            )
             need_word_time_stamp = cfg.faster_whisper_one_word.value
             output_path = str(
                 Path(cfg.work_dir.value)
-                / short_name
+                / file_name
                 / "subtitle"
                 / (
-                    f"【原始字幕】{short_name}-"
-                    f"{cfg.transcribe_model.value.value}-{cfg.transcribe_language.value.value}.srt"
+                    f"【原始字幕】{file_name}-"
+                    f"{cfg.transcribe_model.value.value}-{language.value}.srt"
                 )
             )
         else:
@@ -81,7 +79,7 @@ class TaskFactory:
 
         config = TranscribeConfig(
             transcribe_model=cfg.transcribe_model.value,
-            transcribe_language=LANGUAGES[cfg.transcribe_language.value.value],
+            transcribe_language=LANGUAGES[language.value],
             need_word_time_stamp=need_word_time_stamp,
             output_format=cfg.transcribe_output_format.value,
             # Whisper Cpp 配置
@@ -132,17 +130,12 @@ class TaskFactory:
         )
 
         if need_next_task:
-            source_for_mapping = video_path or file_path
-            short_name = get_or_create_work_dir_short_name(
-                source_path=source_for_mapping,
-                work_dir=str(cfg.work_dir.value),
-                prefix="video",
-            )
+            source_name = Path(video_path or file_path).stem
             output_path = str(
                 Path(cfg.work_dir.value)
-                / short_name
+                / source_name
                 / "subtitle"
-                / f"【样式字幕】{short_name}{suffix}.ass"
+                / f"【样式字幕】{source_name}{suffix}.ass"
             )
         else:
             output_path = str(
@@ -186,7 +179,27 @@ class TaskFactory:
 
         extra_params_item, structured_item = get_provider_param_items(current_service)
         llm_extra_params = cfg.get(extra_params_item)
-        use_structured_outputs = bool(cfg.get(structured_item))
+        try:
+            parse_llm_extra_params(llm_extra_params)
+        except ValueError as exc:
+            raise ValueError(f"当前 LLM 自定义参数无效: {exc}") from exc
+        structured_output_mode = cfg.get(structured_item)
+        use_structured_outputs = structured_output_mode != "off"
+        split_preset = get_llm_provider_preset(cfg.get(cfg.split_llm_preset_name))
+        if split_preset:
+            required_fields = ("api_base", "api_key", "model")
+            missing_fields = [field for field in required_fields if not split_preset.get(field)]
+            if missing_fields:
+                raise ValueError(
+                    f"LLM 分割预设 '{split_preset.get('name', '')}' 缺少: "
+                    f"{', '.join(missing_fields)}"
+                )
+            try:
+                parse_llm_extra_params(split_preset.get("llm_extra_params", ""))
+            except ValueError as exc:
+                raise ValueError(
+                    f"LLM 分割预设 '{split_preset.get('name', '')}' 的自定义参数无效: {exc}"
+                ) from exc
 
         config = SubtitleConfig(
             # 翻译配置
@@ -200,6 +213,7 @@ class TaskFactory:
             # 字幕处理
             need_reflect=cfg.need_reflect_translate.value,
             use_structured_outputs=use_structured_outputs,
+            structured_output_mode=structured_output_mode,
             need_translate=cfg.need_translate.value,
             need_optimize=cfg.need_optimize.value,
             thread_num=cfg.thread_num.value,
@@ -212,6 +226,11 @@ class TaskFactory:
             max_word_count_english=cfg.max_word_count_english.value,
             llm_chunk_target_multiplier=cfg.llm_chunk_target_multiplier.value,
             llm_split_soft_limit_ratio=cfg.llm_split_soft_limit_ratio.value,
+            split_base_url=(str(split_preset.get("api_base", "")) if split_preset else base_url),
+            split_api_key=(str(split_preset.get("api_key", "")) if split_preset else api_key),
+            split_llm_model=(str(split_preset.get("model", "")) if split_preset else llm_model),
+            split_llm_extra_params=(str(split_preset.get("llm_extra_params", "")) if split_preset else llm_extra_params),
+            split_llm_preset_name=(str(split_preset.get("name", "")) if split_preset else ""),
             need_split=cfg.need_split.value,
             # 字幕翻译
             target_language=cfg.target_language.value,

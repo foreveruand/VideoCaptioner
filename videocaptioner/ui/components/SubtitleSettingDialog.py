@@ -5,7 +5,8 @@ from qfluentwidgets import (
 )
 from qfluentwidgets import FluentIcon as FIF
 
-from videocaptioner.ui.common.config import cfg
+from videocaptioner.ui.common.config import cfg, parse_llm_provider_presets
+from videocaptioner.ui.components.EditComboBoxSettingCard import EditComboBoxSettingCard
 from videocaptioner.ui.components.SpinBoxSettingCard import (
     DoubleSpinBoxSettingCard,
     SpinBoxSettingCard,
@@ -52,7 +53,7 @@ class SubtitleSettingDialog(MessageBoxBase):
             cfg.llm_chunk_target_multiplier,
             FIF.ALIGNMENT,  # type: ignore
             self.tr("LLM 分块倍率"),
-            self.tr("单次 LLM 断句请求块长度 = 单行限制 × 该倍率"),
+            self.tr("单次 LLM 断句请求的目标长度，按单行限制乘以该倍率计算"),
             minimum=1,
             maximum=50,
             parent=self,
@@ -70,6 +71,20 @@ class SubtitleSettingDialog(MessageBoxBase):
             parent=self,
         )
 
+        preset_names = [""] + [
+            str(preset.get("name", "")).strip()
+            for preset in parse_llm_provider_presets(cfg.get(cfg.llm_provider_presets))
+            if str(preset.get("name", "")).strip()
+        ]
+        self.split_llm_preset_card = EditComboBoxSettingCard(
+            cfg.split_llm_preset_name,
+            FIF.ROBOT,
+            self.tr("LLM 分割预设"),
+            self.tr("仅用于智能断句，可选择不同模型和思考深度"),
+            preset_names,
+            self,
+        )
+
         # 添加到布局
         self.viewLayout.addWidget(self.titleLabel)
         self.viewLayout.addWidget(self.split_card)
@@ -77,6 +92,7 @@ class SubtitleSettingDialog(MessageBoxBase):
         self.viewLayout.addWidget(self.word_count_english_card)
         self.viewLayout.addWidget(self.llm_chunk_target_multiplier_card)
         self.viewLayout.addWidget(self.llm_split_soft_limit_ratio_card)
+        self.viewLayout.addWidget(self.split_llm_preset_card)
         # 设置间距
         self.viewLayout.setSpacing(10)
 

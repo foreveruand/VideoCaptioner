@@ -7,7 +7,7 @@ from ..llm import call_llm
 from ..llm.params import prepare_llm_request_params
 from ..prompts import get_prompt
 from ..utils.logger import setup_logger
-from ..utils.text_utils import count_words, is_mainly_cjk
+from ..utils.text_utils import count_words
 
 logger = setup_logger("split_by_llm")
 
@@ -31,6 +31,7 @@ def split_by_llm(
     max_word_count_cjk: int = 18,
     max_word_count_english: int = 12,
     llm_extra_params: Any = None,
+    soft_limit_ratio: float = LLM_SPLIT_SOFT_LIMIT_RATIO,
 ) -> List[str]:
     """使用LLM进行文本断句（固定使用句子Segments）
 
@@ -43,17 +44,14 @@ def split_by_llm(
     Returns:
         断句后的文本列表
     """
-    try:
-        return _split_with_agent_loop(
-            text,
-            model,
-            max_word_count_cjk,
-            max_word_count_english,
-            llm_extra_params,
-        )
-    except Exception as e:
-        logger.error(f"Sentence splitting failed: {e}")
-        return [text]
+    return _split_with_agent_loop(
+        text,
+        model,
+        max_word_count_cjk,
+        max_word_count_english,
+        llm_extra_params,
+        soft_limit_ratio,
+    )
 
 
 def _split_with_agent_loop(
@@ -62,6 +60,7 @@ def _split_with_agent_loop(
     max_word_count_cjk: int,
     max_word_count_english: int,
     llm_extra_params: Any = None,
+    soft_limit_ratio: float = LLM_SPLIT_SOFT_LIMIT_RATIO,
 ) -> List[str]:
     """使用agent loop 建立反馈循环进行文本断句，自动验证和修正"""
     prompt_path = "split/sentence"
@@ -80,12 +79,12 @@ def _split_with_agent_loop(
         {"role": "user", "content": user_prompt},
     ]
 
-    last_content_preserving_result = None
     request_params = prepare_llm_request_params(
         {"temperature": 0.1},
         llm_extra_params,
+        protected_keys={"response_format"},
     )
-    soft_limit_ratio = _get_soft_limit_ratio(llm_extra_params)
+    soft_limit_ratio = _normalize_soft_limit_ratio(soft_limit_ratio)
 
     for step in range(MAX_STEPS):
         response = call_llm(
@@ -113,9 +112,6 @@ def _split_with_agent_loop(
             soft_limit_ratio=soft_limit_ratio,
         )
 
-        if validation.content_preserved:
-            last_content_preserving_result = split_result
-
         if validation.status == "valid":
             return split_result
 
@@ -138,15 +134,16 @@ def _split_with_agent_loop(
             }
         )
 
-    return last_content_preserving_result if last_content_preserving_result else [text]
+    raise RuntimeError(
+        "LLM subtitle splitting did not produce a valid result after "
+        f"{MAX_STEPS} attempts"
+    )
 
 
-def _get_soft_limit_ratio(llm_extra_params: Any) -> float:
-    if isinstance(llm_extra_params, dict):
-        value = llm_extra_params.get("subtitle.llm_split_soft_limit_ratio")
-        if isinstance(value, (int, float)) and value > 1:
-            return float(value)
-    return LLM_SPLIT_SOFT_LIMIT_RATIO
+def _normalize_soft_limit_ratio(value: float) -> float:
+    if not isinstance(value, (int, float)) or value < 1:
+        raise ValueError("LLM split soft limit ratio must be at least 1.0")
+    return float(value)
 
 
 def _parse_split_result(result_text: str) -> List[str]:
@@ -160,13 +157,17 @@ def _normalize_segment_spacing(segment: str, text_is_cjk: bool) -> str:
     return re.sub(r"\s+", " ", segment).strip()
 
 
+def _is_cjk_text(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", text))
+
+
 def _join_segments(split_result: List[str], text_is_cjk: bool) -> str:
     joiner = "" if text_is_cjk else " "
     return joiner.join(segment for segment in split_result if segment)
 
 
 def _normalize_for_comparison(text: str, text_is_cjk: bool) -> str:
-    if text_is_cjk:
+    if text_is_cjk or _is_cjk_text(text):
         return re.sub(r"\s+", "", text)
     return re.sub(r"\s+", " ", text).strip()
 
@@ -179,7 +180,7 @@ def _postprocess_split_result(
     soft_limit_ratio: float,
 ) -> List[str]:
     """对 LLM 结果做本地清洗与轻量修复。"""
-    text_is_cjk = is_mainly_cjk(original_text)
+    text_is_cjk = _is_cjk_text(original_text)
     max_allowed = max_word_count_cjk if text_is_cjk else max_word_count_english
     processed = [
         _normalize_segment_spacing(segment, text_is_cjk)
@@ -315,7 +316,7 @@ def _validate_split_result(
             content_preserved=False,
         )
 
-    text_is_cjk = is_mainly_cjk(original_text)
+    text_is_cjk = _is_cjk_text(original_text)
     original_cleaned = _normalize_for_comparison(original_text, text_is_cjk)
     merged_cleaned = _normalize_for_comparison(
         _join_segments(non_empty_segments, text_is_cjk), text_is_cjk

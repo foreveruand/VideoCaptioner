@@ -7,9 +7,10 @@ Requires environment variables:
 """
 
 
-import pytest
 import re
 from types import SimpleNamespace
+
+import pytest
 
 from videocaptioner.core.split.split_by_llm import count_words, split_by_llm
 
@@ -275,8 +276,31 @@ class TestSplitByLLM:
         assert len(result) == 2
         assert all(count_words(segment) <= 12 for segment in result)
 
+    def test_custom_response_format_is_not_sent_to_splitter(self, monkeypatch):
+        captured = {}
+
+        def fake_call_llm(messages, model, **kwargs):
+            captured.update(kwargs)
+            return _make_response("hello<br>world")
+
+        monkeypatch.setattr(
+            "videocaptioner.core.split.split_by_llm.call_llm",
+            fake_call_llm,
+        )
+
+        assert split_by_llm(
+            "hello world",
+            model="gpt-4o-mini",
+            llm_extra_params={
+                "response_format": {"type": "json_object"},
+                "reasoning": {"effort": "high"},
+            },
+        ) == ["hello world"]
+        assert "response_format" not in captured
+        assert captured["extra_body"] == {"reasoning": {"effort": "high"}}
+
     def test_modified_content_falls_back_to_original(self, monkeypatch):
-        """两轮都改写内容时应回退原文。"""
+        """两轮都改写内容时应失败，以便调用方执行规则降级。"""
         responses = iter(["hello brave world", "hello edited world"])
 
         def fake_call_llm(messages, model, **kwargs):
@@ -287,12 +311,11 @@ class TestSplitByLLM:
             fake_call_llm,
         )
 
-        result = split_by_llm("hello world", model="gpt-4o-mini")
+        with pytest.raises(RuntimeError, match="did not produce a valid result"):
+            split_by_llm("hello world", model="gpt-4o-mini")
 
-        assert result == ["hello world"]
-
-    def test_falls_back_to_last_content_preserving_result(self, monkeypatch):
-        """最终失败时优先返回最后一个内容保真的结果。"""
+    def test_invalid_overlong_result_fails_after_bounded_attempts(self, monkeypatch):
+        """内容保真但严重超限时不接受结果，最多请求两次。"""
         call_count = 0
         text = "这是一个非常非常非常长并且没有标点的字幕片段需要继续保持原样"
 
@@ -308,11 +331,10 @@ class TestSplitByLLM:
             fake_call_llm,
         )
 
-        result = split_by_llm(
-            text,
-            model="gpt-4o-mini",
-            max_word_count_cjk=10,
-        )
-
+        with pytest.raises(RuntimeError, match="did not produce a valid result"):
+            split_by_llm(
+                text,
+                model="gpt-4o-mini",
+                max_word_count_cjk=10,
+            )
         assert call_count == 2
-        assert result == [text]

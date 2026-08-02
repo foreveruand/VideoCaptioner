@@ -11,7 +11,7 @@ from qfluentwidgets import FluentIcon as FIF
 from videocaptioner.core.entities import (
     TranscribeLanguageEnum,
     TranscribeModelEnum,
-    get_asr_language_capability,
+    get_available_transcribe_languages,
 )
 from videocaptioner.ui.common.config import cfg
 
@@ -28,11 +28,7 @@ class LanguageSettingDialog(MessageBoxBase):
 
     def _get_available_languages(self) -> list[str]:
         """获取当前模型支持的语言列表"""
-        capability = get_asr_language_capability(self.model)
-        languages = [lang.value for lang in capability.supported_languages]
-        if capability.supports_auto:
-            languages.insert(0, TranscribeLanguageEnum.AUTO.value)
-        return languages
+        return [lang.value for lang in get_available_transcribe_languages(self.model)]
 
     def _setup_ui(self):
         """设置UI"""

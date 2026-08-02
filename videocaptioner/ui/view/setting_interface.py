@@ -16,12 +16,12 @@ from qfluentwidgets import (
     MessageBoxBase,
     OptionsSettingCard,
     PrimaryPushSettingCard,
+    PushButton,
     PushSettingCard,
     RangeSettingCard,
     ScrollArea,
     SettingCardGroup,
     SwitchSettingCard,
-    PushButton,
     setTheme,
     setThemeColor,
 )
@@ -37,7 +37,11 @@ from videocaptioner.core.entities import LLMServiceEnum, TranscribeModelEnum, Tr
 from videocaptioner.core.llm import check_whisper_connection
 from videocaptioner.core.llm.check_llm import check_llm_connection, get_available_models
 from videocaptioner.core.utils.cache import disable_cache, enable_cache
-from videocaptioner.ui.common.config import cfg, get_provider_param_items, parse_llm_provider_presets
+from videocaptioner.ui.common.config import (
+    cfg,
+    get_provider_param_items,
+    parse_llm_provider_presets,
+)
 from videocaptioner.ui.common.signal_bus import signalBus
 from videocaptioner.ui.components.EditComboBoxSettingCard import EditComboBoxSettingCard
 from videocaptioner.ui.components.LineEditSettingCard import LineEditSettingCard
@@ -320,7 +324,7 @@ class SettingInterface(ScrollArea):
                 "api_base_cfg": cfg.openai_api_base,
                 "model_cfg": cfg.openai_model,
                 "extra_params_cfg": cfg.openai_extra_params,
-                "structured_outputs_cfg": cfg.openai_use_structured_outputs,
+                "structured_outputs_cfg": cfg.openai_structured_output_mode,
                 "default_base": "https://api.openai.com/v1",
                 "default_models": [
                     "gemini-2.5-pro",
@@ -336,7 +340,7 @@ class SettingInterface(ScrollArea):
                 "api_base_cfg": cfg.silicon_cloud_api_base,
                 "model_cfg": cfg.silicon_cloud_model,
                 "extra_params_cfg": cfg.silicon_cloud_extra_params,
-                "structured_outputs_cfg": cfg.silicon_cloud_use_structured_outputs,
+                "structured_outputs_cfg": cfg.silicon_cloud_structured_output_mode,
                 "default_base": "https://api.siliconflow.cn/v1",
                 "default_models": [
                     "moonshotai/Kimi-K2-Instruct-0905",
@@ -349,7 +353,7 @@ class SettingInterface(ScrollArea):
                 "api_base_cfg": cfg.deepseek_api_base,
                 "model_cfg": cfg.deepseek_model,
                 "extra_params_cfg": cfg.deepseek_extra_params,
-                "structured_outputs_cfg": cfg.deepseek_use_structured_outputs,
+                "structured_outputs_cfg": cfg.deepseek_structured_output_mode,
                 "default_base": "https://api.deepseek.com/v1",
                 "default_models": ["deepseek-chat", "deepseek-reasoner"],
             },
@@ -359,7 +363,7 @@ class SettingInterface(ScrollArea):
                 "api_base_cfg": cfg.ollama_api_base,
                 "model_cfg": cfg.ollama_model,
                 "extra_params_cfg": cfg.ollama_extra_params,
-                "structured_outputs_cfg": cfg.ollama_use_structured_outputs,
+                "structured_outputs_cfg": cfg.ollama_structured_output_mode,
                 "default_base": "http://localhost:11434/v1",
                 "default_models": ["qwen3:8b"],
             },
@@ -369,7 +373,7 @@ class SettingInterface(ScrollArea):
                 "api_base_cfg": cfg.lm_studio_api_base,
                 "model_cfg": cfg.lm_studio_model,
                 "extra_params_cfg": cfg.lm_studio_extra_params,
-                "structured_outputs_cfg": cfg.lm_studio_use_structured_outputs,
+                "structured_outputs_cfg": cfg.lm_studio_structured_output_mode,
                 "default_base": "http://localhost:1234/v1",
                 "default_models": ["qwen3:8b"],
             },
@@ -379,7 +383,7 @@ class SettingInterface(ScrollArea):
                 "api_base_cfg": cfg.gemini_api_base,
                 "model_cfg": cfg.gemini_model,
                 "extra_params_cfg": cfg.gemini_extra_params,
-                "structured_outputs_cfg": cfg.gemini_use_structured_outputs,
+                "structured_outputs_cfg": cfg.gemini_structured_output_mode,
                 "default_base": "https://generativelanguage.googleapis.com/v1beta/openai/",
                 "default_models": [
                     "gemini-2.5-pro",
@@ -393,7 +397,7 @@ class SettingInterface(ScrollArea):
                 "api_base_cfg": cfg.chatglm_api_base,
                 "model_cfg": cfg.chatglm_model,
                 "extra_params_cfg": cfg.chatglm_extra_params,
-                "structured_outputs_cfg": cfg.chatglm_use_structured_outputs,
+                "structured_outputs_cfg": cfg.chatglm_structured_output_mode,
                 "default_base": "https://open.bigmodel.cn/api/paas/v4",
                 "default_models": ["glm-4-plus", "glm-4-air-250414", "glm-4-flash"],
             },
@@ -461,11 +465,12 @@ class SettingInterface(ScrollArea):
             setattr(self, f"{prefix}_extra_params_card", extra_params_card)
 
             # 创建结构化输出卡片（供应商独立）
-            structured_outputs_card = SwitchSettingCard(
-                FIF.CODE,
-                self.tr("结构化输出"),
-                self.tr("仅用于 LLM 翻译流程，需模型服务支持"),
+            structured_outputs_card = ComboBoxSettingCard(
                 config["structured_outputs_cfg"],
+                FIF.CODE,
+                self.tr("结构化输出模式"),
+                self.tr("仅用于 LLM 翻译；严格 schema 仅适用于明确支持的模型"),
+                ["off", "json_object", "json_schema"],
                 self.llmGroup,
             )
             setattr(self, f"{prefix}_structured_outputs_card", structured_outputs_card)
@@ -987,7 +992,7 @@ class SettingInterface(ScrollArea):
             "api_base": service_config["api_base"].lineEdit.text().strip(),
             "model": cfg.get(service_config["model_cfg"]).strip(),
             "llm_extra_params": service_config["extra_params"].lineEdit.text().strip(),
-            "use_structured_outputs": bool(cfg.get(structured_item)),
+            "structured_output_mode": cfg.get(structured_item),
         }
 
     def __applyPreset(self, preset: dict[str, Any]) -> None:
@@ -1012,7 +1017,10 @@ class SettingInterface(ScrollArea):
             str(preset.get("llm_extra_params", ""))
         )
         _, structured_item = get_provider_param_items(provider)
-        cfg.set(structured_item, bool(preset.get("use_structured_outputs", False)))
+        mode = preset.get("structured_output_mode")
+        if mode not in {"off", "json_object", "json_schema"}:
+            mode = "json_schema" if preset.get("use_structured_outputs", False) else "off"
+        cfg.set(structured_item, mode)
 
     def __savePresetByName(self, name: str, overwrite: bool) -> bool:
         clean_name = name.strip()

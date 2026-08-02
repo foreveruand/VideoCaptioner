@@ -203,7 +203,8 @@ class TestSubtitleSplitterInit:
 
         splitter._process_by_llm([ASRDataSeg(text="你", start_time=0, end_time=50)])
 
-        assert captured["llm_extra_params"]["subtitle.llm_split_soft_limit_ratio"] == 1.25
+        assert captured["soft_limit_ratio"] == 1.25
+        assert "subtitle.llm_split_soft_limit_ratio" not in captured["llm_extra_params"]
 
 
 class TestDetermineNumSegments:

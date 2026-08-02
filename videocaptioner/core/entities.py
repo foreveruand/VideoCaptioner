@@ -519,6 +519,16 @@ def get_asr_language_capability(model: TranscribeModelEnum) -> ASRLanguageCapabi
     )
 
 
+def get_available_transcribe_languages(
+    model: TranscribeModelEnum,
+) -> list[TranscribeLanguageEnum]:
+    """获取指定模型可在转录时选择的源语言。"""
+    capability = get_asr_language_capability(model)
+    if capability.supports_auto:
+        return [TranscribeLanguageEnum.AUTO, *capability.supported_languages]
+    return capability.supported_languages
+
+
 @dataclass
 class AudioStreamInfo:
     """音频流信息"""
@@ -637,6 +647,7 @@ class SubtitleConfig:
     need_optimize: bool = False
     need_reflect: bool = False
     use_structured_outputs: bool = False
+    structured_output_mode: str = "off"
     thread_num: int = 10
     batch_size: int = 10
     # 字幕布局和分割
@@ -645,6 +656,11 @@ class SubtitleConfig:
     max_word_count_english: int = 18
     llm_chunk_target_multiplier: int = 8
     llm_split_soft_limit_ratio: float = 1.1
+    split_base_url: Optional[str] = None
+    split_api_key: Optional[str] = None
+    split_llm_model: Optional[str] = None
+    split_llm_extra_params: Optional[str] = None
+    split_llm_preset_name: Optional[str] = None
     need_split: bool = True
     target_language: Optional["TargetLanguage"] = None
     subtitle_style: Optional[str] = None

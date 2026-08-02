@@ -1,6 +1,6 @@
 from typing import Optional
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import QSignalBlocker, Qt, pyqtSignal
 from qfluentwidgets import LineEdit, SettingCard
 from qfluentwidgets.common.config import ConfigItem, qconfig
 
@@ -36,9 +36,12 @@ class LineEditSettingCard(SettingCard):
         configItem.valueChanged.connect(self.setValue)
 
     def __onTextChanged(self, text: str):
-        self.setValue(text)
+        qconfig.set(self.configItem, text)
         self.textChanged.emit(text)
 
     def setValue(self, value: str):
-        qconfig.set(self.configItem, value)
-        self.lineEdit.setText(value)
+        value = str(value)
+        if self.lineEdit.text() == value:
+            return
+        with QSignalBlocker(self.lineEdit):
+            self.lineEdit.setText(value)

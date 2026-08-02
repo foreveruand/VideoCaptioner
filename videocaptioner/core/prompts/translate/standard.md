@@ -26,9 +26,12 @@ ${custom_prompt}
 </terminology_and_requirements>
 
 <output_format>
-Return the result strictly in valid JSON format as shown below, without any markdown formatting or additional explanations:
+Return strictly valid JSON without markdown or additional explanations. When structured output is enabled, use this exact wrapper and fields:
 {
-  "0": "Translated half of the sentence...",
-  "1": "...rest of the translated sentence."
+  "translations": [
+    {"index": "0", "translated_text": "Translated half of the sentence..."},
+    {"index": "1", "translated_text": "...rest of the translated sentence."}
+  ]
 }
+Otherwise, return an object whose input keys map directly to translated text.
 </output_format>

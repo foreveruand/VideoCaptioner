@@ -40,6 +40,7 @@ class LLMTranslator(BaseTranslator):
         custom_prompt: str,
         is_reflect: bool,
         use_structured_outputs: bool = False,
+        structured_output_mode: str = "off",
         llm_extra_params: Any = None,
         update_callback: Optional[Callable] = None,
     ):
@@ -53,7 +54,15 @@ class LLMTranslator(BaseTranslator):
         self.model = model
         self.custom_prompt = custom_prompt
         self.is_reflect = is_reflect
-        self.use_structured_outputs = use_structured_outputs
+        self.structured_output_mode = (
+            structured_output_mode if structured_output_mode in {"off", "json_object", "json_schema"}
+            else "off"
+        )
+        if use_structured_outputs and self.structured_output_mode == "off":
+            self.structured_output_mode = "json_schema"
+        self.use_structured_outputs = (
+            self.structured_output_mode != "off" or use_structured_outputs
+        )
         self.llm_extra_params = parse_llm_extra_params(llm_extra_params)
         self._item_cache = self._cache
 
@@ -158,7 +167,7 @@ class LLMTranslator(BaseTranslator):
                 messages.append(
                     {
                         "role": "user",
-                        "content": f"Error: {error_message_for_next}\n\nFix the errors above and output ONLY a valid JSON dictionary with ALL {len(pending_dict)} keys",
+                        "content": self._get_retry_instruction(error_message_for_next, len(pending_dict)),
                     }
                 )
             request_params = prepare_llm_request_params(
@@ -237,6 +246,8 @@ class LLMTranslator(BaseTranslator):
                 on_text_delta=handle_stream_delta,
                 **request_params,
             ).strip()
+        except (openai.BadRequestError, openai.AuthenticationError, openai.PermissionDeniedError, openai.NotFoundError):
+            raise
         except Exception:
             if stream_started:
                 raise
@@ -250,8 +261,11 @@ class LLMTranslator(BaseTranslator):
 
     def _get_response_format_kwargs(self, subtitle_dict: Dict[str, str]) -> Dict[str, Any]:
         """Return OpenAI-compatible Structured Outputs args when enabled."""
-        if not self.use_structured_outputs:
+        if not self.use_structured_outputs or self.structured_output_mode == "off":
             return {}
+
+        if self.structured_output_mode == "json_object":
+            return {"response_format": {"type": "json_object"}}
 
         item_properties: Dict[str, Any] = {
             "index": {
@@ -302,6 +316,22 @@ class LLMTranslator(BaseTranslator):
             }
         }
 
+    def _get_retry_instruction(self, error_message: str, item_count: int) -> str:
+        if self.use_structured_outputs:
+            fields = (
+                "index, initial_translation, reflection, native_translation"
+                if self.is_reflect
+                else "index, translated_text"
+            )
+            return (
+                f"Error: {error_message}\n\nReturn ONLY valid JSON with a top-level "
+                f"'translations' array containing all {item_count} items. Each item must include: {fields}."
+            )
+        return (
+            f"Error: {error_message}\n\nFix the errors above and output ONLY a valid JSON "
+            f"dictionary with ALL {item_count} keys"
+        )
+
     def _get_item_cache_key(self, data: SubtitleProcessData) -> str:
         cache_data = {
             "class": self.__class__.__name__,
@@ -311,7 +341,7 @@ class LLMTranslator(BaseTranslator):
             "model": self.model,
             "custom_prompt": self.custom_prompt,
             "is_reflect": self.is_reflect,
-            "use_structured_outputs": self.use_structured_outputs,
+            "structured_output_mode": self.structured_output_mode,
             "llm_extra_params": serialize_llm_extra_params(self.llm_extra_params),
         }
         return f"LLMTranslator:item:{generate_cache_key(cache_data)}"
@@ -413,10 +443,10 @@ class LLMTranslator(BaseTranslator):
         """Parse legacy dict output or Structured Outputs wrapper."""
         parsed = json_repair.loads(response_content)
         if not self.use_structured_outputs:
-            return parsed
+            return parsed if isinstance(parsed, dict) else {}
 
         if not isinstance(parsed, dict) or "translations" not in parsed:
-            return parsed
+            return parsed if isinstance(parsed, dict) else {}
 
         translations = parsed["translations"]
         if not isinstance(translations, list):
@@ -625,6 +655,6 @@ class LLMTranslator(BaseTranslator):
         chunk_key = generate_cache_key(chunk)
         lang = self.target_language.value
         model = self.model
-        structured = self.use_structured_outputs
+        structured = self.structured_output_mode
         extra_params = serialize_llm_extra_params(self.llm_extra_params)
         return f"{class_name}:{chunk_key}:{lang}:{model}:structured={structured}:extra={extra_params}"

@@ -30,13 +30,14 @@ Based on your analysis, rewrite the translation to sound completely natural in $
 </instructions>
 
 <output_format>
+When structured output is enabled, return the following wrapper. Otherwise, use the same per-index objects directly at the top level.
 {
-"1": {
+"translations": [{
+"index": "1",
 "initial_translation": "<<< First translation >>>",
 "reflection": "<<< Identify machine-translation patterns: What sounds unnatural? Why? What would a native speaker say instead? Consider structure, word choice, context, culture, register. Be specific about problems and alternatives. >>>",
 "native_translation": "<<< Natural, native-quality translation that eliminates all machine-translation artifacts >>>"
-},
-...
+}]
 }
 </output_format>
 
